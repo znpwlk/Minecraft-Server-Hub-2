@@ -35,7 +35,7 @@ public class ContentPanel extends StackPane {
     private boolean isAnimating = false;
     private Animation currentAnimation = null;
     private long lastSwitchTime = 0;
-    private static final long MIN_SWITCH_INTERVAL = 150;
+    private static final long MIN_SWITCH_INTERVAL = 50;
     private String lastRandomEffect = null;
     
     public ContentPanel(Main mainApp, ServerManager manager) {
@@ -883,7 +883,12 @@ public class ContentPanel extends StackPane {
             "-fx-font-size: 12;"
         );
 
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             java.util.List<String> history = currentServer.getLogHistory(currentServer.getLogDisplayLines());
             StringBuilder sb = new StringBuilder();
             for (String line : history) {
@@ -894,7 +899,8 @@ public class ContentPanel extends StackPane {
                 logArea.setText(logText);
                 logArea.positionCaret(logArea.getText().length());
             });
-        }).start();
+            executor.shutdown();
+        });
 
         ContextMenu contextMenu = new ContextMenu();
         contextMenu.setStyle("-fx-background-color: white;");
@@ -993,13 +999,19 @@ public class ContentPanel extends StackPane {
         }
         
         if (currentServer.getState() == ServerCore.ServerState.STOPPED && currentServer.canAttach()) {
-            new Thread(() -> {
+            java.util.concurrent.ExecutorService attachExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r);
+                t.setDaemon(true);
+                return t;
+            });
+            attachExecutor.submit(() -> {
                 if (currentServer.attachToProcess()) {
                     Platform.runLater(() -> {
                         mainApp.showNotification("已重新连接到外部启动的服务器 (PID: " + currentServer.getProcessPid() + ")，只能强制关闭", "warning");
                     });
                 }
-            }).start();
+                attachExecutor.shutdown();
+            });
         }
         
         HBox cmdBox = new HBox(10);
@@ -1159,14 +1171,15 @@ public class ContentPanel extends StackPane {
                         currentServer.start();
                     } else {
                         currentServer.forceStop();
-                        new Thread(() -> {
-                            try {
-                                Thread.sleep(1000);
-                                Platform.runLater(() -> currentServer.start());
-                            } catch (InterruptedException e) {
-                                Platform.runLater(() -> currentServer.start());
-                            }
-                        }).start();
+                        java.util.concurrent.ScheduledExecutorService scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                            Thread t = new Thread(r);
+                            t.setDaemon(true);
+                            return t;
+                        });
+                        scheduler.schedule(() -> {
+                            Platform.runLater(() -> currentServer.start());
+                            scheduler.shutdown();
+                        }, 1, java.util.concurrent.TimeUnit.SECONDS);
                     }
                 }
             },
@@ -1446,7 +1459,12 @@ public class ContentPanel extends StackPane {
 
         contentBox.getChildren().addAll(currentLabel, loadingLabel);
 
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             List<String> detectedJavaList = detectSystemJava();
 
             Platform.runLater(() -> {
@@ -1485,7 +1503,8 @@ public class ContentPanel extends StackPane {
                 javaPathField.setDisable(!customRadio.isSelected());
                 browseBtn.setDisable(!customRadio.isSelected());
             });
-        }).start();
+            executor.shutdown();
+        });
 
         ScrollPane scroll = new ScrollPane(contentBox);
         scroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
@@ -1798,7 +1817,91 @@ public class ContentPanel extends StackPane {
 
         animSection.getChildren().addAll(animTitle, animDesc, animButtons);
 
-        settingsBox.getChildren().addAll(bgSection, animSection);
+        VBox notifSection = new VBox(12);
+        notifSection.setAlignment(Pos.CENTER_LEFT);
+
+        Label notifTitle = new Label("通知显示时间");
+        notifTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
+        notifTitle.setTextFill(Color.WHITE);
+
+        Label notifDesc = new Label("设置通知弹窗的显示时长（1-30秒）");
+        notifDesc.setFont(Font.font("Microsoft YaHei", 12));
+        notifDesc.setTextFill(Color.rgb(180, 180, 180));
+
+        HBox notifControls = new HBox(15);
+        notifControls.setAlignment(Pos.CENTER_LEFT);
+
+        javafx.scene.control.Slider notifSlider = new javafx.scene.control.Slider(1, 30, mainApp.getNotificationDuration());
+        notifSlider.setPrefWidth(300);
+        notifSlider.setMajorTickUnit(5);
+        notifSlider.setMinorTickCount(4);
+        notifSlider.setSnapToTicks(true);
+        notifSlider.setShowTickLabels(false);
+        notifSlider.setShowTickMarks(true);
+
+        javafx.application.Platform.runLater(() -> {
+            javafx.scene.Node track = notifSlider.lookup(".track");
+            if (track != null) {
+                track.setStyle(
+                    "-fx-background-color: rgba(100, 100, 100, 0.5);" +
+                    "-fx-background-radius: 3;" +
+                    "-fx-pref-height: 6;"
+                );
+            }
+            javafx.scene.Node thumb = notifSlider.lookup(".thumb");
+            if (thumb != null) {
+                thumb.setStyle(
+                    "-fx-background-color: #64B5F6;" +
+                    "-fx-background-radius: 50%;" +
+                    "-fx-pref-width: 18;" +
+                    "-fx-pref-height: 18;" +
+                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 4, 0, 0, 2);"
+                );
+            }
+        });
+
+        notifSlider.setOnMouseEntered(e -> {
+            e.consume();
+            javafx.scene.Node thumb = notifSlider.lookup(".thumb");
+            if (thumb != null) {
+                thumb.setStyle(
+                    "-fx-background-color: #90CAF9;" +
+                    "-fx-background-radius: 50%;" +
+                    "-fx-pref-width: 20;" +
+                    "-fx-pref-height: 20;" +
+                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 6, 0, 0, 3);"
+                );
+            }
+        });
+        notifSlider.setOnMouseExited(e -> {
+            e.consume();
+            javafx.scene.Node thumb = notifSlider.lookup(".thumb");
+            if (thumb != null) {
+                thumb.setStyle(
+                    "-fx-background-color: #64B5F6;" +
+                    "-fx-background-radius: 50%;" +
+                    "-fx-pref-width: 18;" +
+                    "-fx-pref-height: 18;" +
+                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 4, 0, 0, 2);"
+                );
+            }
+        });
+
+        Label notifValueLabel = new Label(mainApp.getNotificationDuration() + " 秒");
+        notifValueLabel.setFont(Font.font("Microsoft YaHei", 14));
+        notifValueLabel.setTextFill(Color.rgb(100, 180, 255));
+        notifValueLabel.setPrefWidth(60);
+
+        notifSlider.valueProperty().addListener((obs, old, val) -> {
+            int value = val.intValue();
+            notifValueLabel.setText(value + " 秒");
+            mainApp.setNotificationDuration(value);
+        });
+
+        notifControls.getChildren().addAll(notifSlider, notifValueLabel);
+        notifSection.getChildren().addAll(notifTitle, notifDesc, notifControls);
+
+        settingsBox.getChildren().addAll(bgSection, animSection, notifSection);
         settingsView.getChildren().addAll(title, settingsBox);
 
         String transitionType = determineTransition("appearance");
@@ -1918,7 +2021,12 @@ public class ContentPanel extends StackPane {
             updateBtn.setVisible(false);
             progressBar.setVisible(false);
 
-            new Thread(() -> {
+            java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r);
+                t.setDaemon(true);
+                return t;
+            });
+            executor.submit(() -> {
                 try {
                     UpdateChecker checker = new UpdateChecker(Main.VERSION);
                     checkResult[0] = checker.checkUpdate();
@@ -1963,7 +2071,8 @@ public class ContentPanel extends StackPane {
                         showAlert("检查更新失败，请检查网络连接或稍后重试");
                     });
                 }
-            }).start();
+                executor.shutdown();
+            });
         });
 
         updateBtn.setOnAction(e -> {
@@ -2067,24 +2176,6 @@ public class ContentPanel extends StackPane {
                 () -> showUpdateSettings()
             );
         }
-    }
-
-    private String detectJavaPath() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("where", "java");
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(process.getInputStream()))) {
-                String line = reader.readLine();
-                if (line != null && !line.isEmpty()) {
-                    return line.trim();
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("检测 Java 失败: " + e.getMessage());
-        }
-        return null;
     }
 
     private List<String> detectSystemJava() {
@@ -2228,12 +2319,18 @@ public class ContentPanel extends StackPane {
             );
         }
         
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             if (gameRulesManager == null) {
                 gameRulesManager = new GameRulesManager();
             }
             Platform.runLater(() -> loadGameRulesForServer(currentServer));
-        }).start();
+            executor.shutdown();
+        });
     }
     
     private void loadGameRulesForServer(ServerCore server) {
@@ -2281,7 +2378,12 @@ public class ContentPanel extends StackPane {
             return;
         }
         
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             for (GameRuleItem rule : rules) {
                 String currentValue = server.queryGameRuleValue(rule.getName());
                 if (currentValue != null) {
@@ -2309,7 +2411,8 @@ public class ContentPanel extends StackPane {
                     gameRulesContainer.getChildren().add(ruleBox);
                 }
             });
-        }).start();
+            executor.shutdown();
+        });
     }
     
     private HBox createGameRuleBox(GameRuleItem rule, ServerCore server) {
@@ -2475,56 +2578,6 @@ public class ContentPanel extends StackPane {
             java.util.List<javafx.scene.Node> infoNodes = java.util.Arrays.asList(version, desc);
             AnimationUtils.applyStaggeredFadeUp(infoNodes, 150);
         });
-    }
-
-    private Button createActionBtn(String text, String color) {
-        Button btn = new Button(text);
-        btn.setPrefWidth(200);
-        btn.setPrefHeight(45);
-        btn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
-        btn.setTextFill(Color.WHITE);
-        String rgbaColor = colorToRgba(color, 0.7);
-        btn.setStyle(
-            "-fx-background-color: " + rgbaColor + ";" +
-            "-fx-background-radius: 8;" +
-            "-fx-cursor: hand;"
-        );
-        btn.setOnMouseEntered(e -> btn.setStyle(
-            "-fx-background-color: " + color + ";" +
-            "-fx-background-radius: 8;" +
-            "-fx-cursor: hand;"
-        ));
-        btn.setOnMouseExited(e -> btn.setStyle(
-            "-fx-background-color: " + rgbaColor + ";" +
-            "-fx-background-radius: 8;" +
-            "-fx-cursor: hand;"
-        ));
-        return btn;
-    }
-    
-    private Button createSmallBtn(String text, String color) {
-        Button btn = new Button(text);
-        btn.setPrefWidth(70);
-        btn.setPrefHeight(32);
-        btn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 12));
-        btn.setTextFill(Color.WHITE);
-        String rgbaColor = colorToRgba(color, 0.7);
-        btn.setStyle(
-            "-fx-background-color: " + rgbaColor + ";" +
-            "-fx-background-radius: 6;" +
-            "-fx-cursor: hand;"
-        );
-        btn.setOnMouseEntered(e -> btn.setStyle(
-            "-fx-background-color: " + color + ";" +
-            "-fx-background-radius: 6;" +
-            "-fx-cursor: hand;"
-        ));
-        btn.setOnMouseExited(e -> btn.setStyle(
-            "-fx-background-color: " + rgbaColor + ";" +
-            "-fx-background-radius: 6;" +
-            "-fx-cursor: hand;"
-        ));
-        return btn;
     }
 
     private Button createSmallIconBtn(String text, String color, String iconPath) {
@@ -2845,6 +2898,7 @@ public class ContentPanel extends StackPane {
         lastSwitchTime = currentTime;
         newView.setMaxWidth(680);
         newView.setMaxHeight(528);
+        newView.setOpacity(0);
 
         if (currentView != null) {
             isAnimating = true;
@@ -2904,7 +2958,6 @@ public class ContentPanel extends StackPane {
         } else {
             currentView = newView;
             getChildren().add(newView);
-            newView.setOpacity(0);
 
             FadeTransition fade = new FadeTransition(Duration.millis(300), newView);
             fade.setFromValue(0);
@@ -2939,27 +2992,4 @@ public class ContentPanel extends StackPane {
         }
     }
 
-    private Button createIconButton(String icon) {
-        Button btn = new Button(icon);
-        btn.setFont(Font.font("Segoe UI Emoji", 14));
-        btn.setStyle(
-            "-fx-background-color: rgba(255,255,255,0.15);" +
-            "-fx-background-radius: 6;" +
-            "-fx-cursor: hand;" +
-            "-fx-padding: 4 8;"
-        );
-        btn.setOnMouseEntered(e -> btn.setStyle(
-            "-fx-background-color: rgba(255,255,255,0.25);" +
-            "-fx-background-radius: 6;" +
-            "-fx-cursor: hand;" +
-            "-fx-padding: 4 8;"
-        ));
-        btn.setOnMouseExited(e -> btn.setStyle(
-            "-fx-background-color: rgba(255,255,255,0.15);" +
-            "-fx-background-radius: 6;" +
-            "-fx-cursor: hand;" +
-            "-fx-padding: 4 8;"
-        ));
-        return btn;
-    }
 }

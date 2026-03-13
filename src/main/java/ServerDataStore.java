@@ -13,38 +13,31 @@ public class ServerDataStore {
                 dir.mkdirs();
             }
             
-            StringBuilder json = new StringBuilder();
-            json.append("[\n");
-            
-            for (int i = 0; i < servers.size(); i++) {
-                ServerCore s = servers.get(i);
-                json.append("  {\n");
-                json.append("    \"id\": \"").append(escapeJson(s.getId())).append("\",\n");
-                json.append("    \"name\": \"").append(escapeJson(s.getName())).append("\",\n");
-                json.append("    \"jarPath\": \"").append(escapeJson(s.getJarPath())).append("\",\n");
-                json.append("    \"minRam\": \"").append(escapeJson(s.getMinRam())).append("\",\n");
-                json.append("    \"maxRam\": \"").append(escapeJson(s.getMaxRam())).append("\",\n");
-                json.append("    \"javaPath\": \"").append(escapeJson(s.getJavaPath())).append("\",\n");
-                json.append("    \"workingDir\": \"").append(escapeJson(s.getWorkingDir())).append("\",\n");
-                json.append("    \"extraArgs\": \"").append(escapeJson(s.getExtraArgs())).append("\",\n");
-                json.append("    \"autoMemory\": ").append(s.isAutoMemory()).append(",\n");
-                json.append("    \"logSizeLimit\": ").append(s.getLogSizeLimit()).append(",\n");
-                json.append("    \"logDisplayLines\": ").append(s.getLogDisplayLines()).append(",\n");
-                json.append("    \"order\": ").append(s.getOrder()).append(",\n");
-                json.append("    \"starred\": ").append(s.isStarred()).append(",\n");
-                json.append("    \"processPid\": ").append(s.getProcessPid()).append("\n");
-                json.append("  }");
-                if (i < servers.size() - 1) {
-                    json.append(",");
-                }
-                json.append("\n");
+            List<Map<String, Object>> serverList = new ArrayList<>();
+            for (ServerCore s : servers) {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("id", s.getId());
+                map.put("name", s.getName());
+                map.put("jarPath", s.getJarPath());
+                map.put("minRam", s.getMinRam());
+                map.put("maxRam", s.getMaxRam());
+                map.put("javaPath", s.getJavaPath());
+                map.put("workingDir", s.getWorkingDir());
+                map.put("extraArgs", s.getExtraArgs());
+                map.put("autoMemory", s.isAutoMemory());
+                map.put("logSizeLimit", s.getLogSizeLimit());
+                map.put("logDisplayLines", s.getLogDisplayLines());
+                map.put("order", s.getOrder());
+                map.put("starred", s.isStarred());
+                map.put("processPid", s.getProcessPid());
+                serverList.add(map);
             }
             
-            json.append("]");
+            String json = JsonUtils.listToJson(serverList);
             
             File file = new File(dir, SERVERS_FILE);
             try (FileWriter writer = new FileWriter(file)) {
-                writer.write(json.toString());
+                writer.write(json);
             }
         } catch (Exception e) {
             System.out.println("保存失败: " + e.getMessage());
@@ -67,218 +60,48 @@ public class ServerDataStore {
                 return servers;
             }
             
-            List<Map<String, String>> serverList = parseJsonArray(content);
+            List<Object> serverList = JsonUtils.parseArray(content);
             
-            for (Map<String, String> data : serverList) {
-                String id = data.get("id");
-                String name = data.get("name");
-                String jarPath = data.get("jarPath");
-                String minRam = data.getOrDefault("minRam", "1G");
-                String maxRam = data.getOrDefault("maxRam", "2G");
-                String javaPath = data.getOrDefault("javaPath", "java");
-                String extraArgs = data.getOrDefault("extraArgs", "");
-                boolean autoMemory = "true".equalsIgnoreCase(data.getOrDefault("autoMemory", "false"));
-                int logSizeLimit = -1;
-                try {
-                    logSizeLimit = Integer.parseInt(data.getOrDefault("logSizeLimit", "-1"));
-                } catch (NumberFormatException e) {
-                    logSizeLimit = -1;
-                }
+            for (Object obj : serverList) {
+                if (!(obj instanceof Map)) continue;
                 
-                int logDisplayLines = 500;
-                try {
-                    logDisplayLines = Integer.parseInt(data.getOrDefault("logDisplayLines", "500"));
-                } catch (NumberFormatException e) {
-                    logDisplayLines = 500;
-                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) obj;
                 
-                int order = 0;
-                try {
-                    order = Integer.parseInt(data.getOrDefault("order", "0"));
-                } catch (NumberFormatException e) {
-                    order = 0;
-                }
+                String id = JsonUtils.getString(data, "id", null);
+                String name = JsonUtils.getString(data, "name", null);
+                String jarPath = JsonUtils.getString(data, "jarPath", null);
                 
-                boolean starred = "true".equalsIgnoreCase(data.getOrDefault("starred", "false"));
+                if (name == null || jarPath == null) continue;
                 
-                long processPid = -1;
-                try {
-                    processPid = Long.parseLong(data.getOrDefault("processPid", "-1"));
-                } catch (NumberFormatException e) {
-                    processPid = -1;
-                }
+                String minRam = JsonUtils.getString(data, "minRam", "1G");
+                String maxRam = JsonUtils.getString(data, "maxRam", "2G");
+                String javaPath = JsonUtils.getString(data, "javaPath", "java");
+                String extraArgs = JsonUtils.getString(data, "extraArgs", "");
+                boolean autoMemory = JsonUtils.getBoolean(data, "autoMemory", false);
+                int logSizeLimit = JsonUtils.getInt(data, "logSizeLimit", -1);
+                int logDisplayLines = JsonUtils.getInt(data, "logDisplayLines", 500);
+                int order = JsonUtils.getInt(data, "order", 0);
+                boolean starred = JsonUtils.getBoolean(data, "starred", false);
+                long processPid = JsonUtils.getLong(data, "processPid", -1);
 
-                if (name != null && jarPath != null) {
-                    ServerCore server;
-                    if (id != null && !id.isEmpty()) {
-                        server = new ServerCore(id, name, jarPath, minRam, maxRam, javaPath, extraArgs, autoMemory);
-                    } else {
-                        server = new ServerCore(name, jarPath, minRam, maxRam, javaPath, extraArgs, autoMemory);
-                    }
-                    server.setLogSizeLimit(logSizeLimit);
-                    server.setLogDisplayLines(logDisplayLines);
-                    server.setOrder(order);
-                    server.setStarred(starred);
-                    server.setProcessPid(processPid);
-                    servers.add(server);
+                ServerCore server;
+                if (id != null && !id.isEmpty()) {
+                    server = new ServerCore(id, name, jarPath, minRam, maxRam, javaPath, extraArgs, autoMemory);
+                } else {
+                    server = new ServerCore(name, jarPath, minRam, maxRam, javaPath, extraArgs, autoMemory);
                 }
+                server.setLogSizeLimit(logSizeLimit);
+                server.setLogDisplayLines(logDisplayLines);
+                server.setOrder(order);
+                server.setStarred(starred);
+                server.setProcessPid(processPid);
+                servers.add(server);
             }
         } catch (Exception e) {
             System.out.println("加载失败: " + e.getMessage());
         }
         
         return servers;
-    }
-    
-    private static List<Map<String, String>> parseJsonArray(String json) {
-        List<Map<String, String>> result = new ArrayList<>();
-        
-        json = json.trim();
-        if (!json.startsWith("[") || !json.endsWith("]")) {
-            return result;
-        }
-        
-        json = json.substring(1, json.length() - 1).trim();
-        if (json.isEmpty()) {
-            return result;
-        }
-        
-        List<String> objects = splitObjects(json);
-        
-        for (String obj : objects) {
-            Map<String, String> map = parseJsonObject(obj);
-            if (!map.isEmpty()) {
-                result.add(map);
-            }
-        }
-        
-        return result;
-    }
-    
-    private static List<String> splitObjects(String json) {
-        List<String> result = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int depth = 0;
-        boolean inString = false;
-        
-        for (char c : json.toCharArray()) {
-            if (c == '"' && (current.length() == 0 || current.charAt(current.length() - 1) != '\\')) {
-                inString = !inString;
-            }
-            
-            if (!inString) {
-                if (c == '{') {
-                    depth++;
-                } else if (c == '}') {
-                    depth--;
-                } else if (c == ',' && depth == 0) {
-                    String obj = current.toString().trim();
-                    if (!obj.isEmpty()) {
-                        result.add(obj);
-                    }
-                    current = new StringBuilder();
-                    continue;
-                }
-            }
-            
-            current.append(c);
-        }
-        
-        String last = current.toString().trim();
-        if (!last.isEmpty()) {
-            result.add(last);
-        }
-        
-        return result;
-    }
-    
-    private static Map<String, String> parseJsonObject(String json) {
-        Map<String, String> result = new HashMap<>();
-        
-        json = json.trim();
-        if (!json.startsWith("{") || !json.endsWith("}")) {
-            return result;
-        }
-        
-        json = json.substring(1, json.length() - 1).trim();
-        if (json.isEmpty()) {
-            return result;
-        }
-        
-        List<String> pairs = splitPairs(json);
-        
-        for (String pair : pairs) {
-            int colonIndex = pair.indexOf(':');
-            if (colonIndex > 0) {
-                String key = pair.substring(0, colonIndex).trim();
-                String value = pair.substring(colonIndex + 1).trim();
-                
-                key = unescapeJson(key);
-                value = unescapeJson(value);
-                
-                result.put(key, value);
-            }
-        }
-        
-        return result;
-    }
-    
-    private static List<String> splitPairs(String json) {
-        List<String> result = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int depth = 0;
-        boolean inString = false;
-        
-        for (char c : json.toCharArray()) {
-            if (c == '"' && (current.length() == 0 || current.charAt(current.length() - 1) != '\\')) {
-                inString = !inString;
-            }
-            
-            if (!inString) {
-                if (c == '{' || c == '[') {
-                    depth++;
-                } else if (c == '}' || c == ']') {
-                    depth--;
-                } else if (c == ',' && depth == 0) {
-                    String pair = current.toString().trim();
-                    if (!pair.isEmpty()) {
-                        result.add(pair);
-                    }
-                    current = new StringBuilder();
-                    continue;
-                }
-            }
-            
-            current.append(c);
-        }
-        
-        String last = current.toString().trim();
-        if (!last.isEmpty()) {
-            result.add(last);
-        }
-        
-        return result;
-    }
-    
-    private static String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
-    
-    private static String unescapeJson(String s) {
-        if (s == null) return "";
-        s = s.trim();
-        if (s.startsWith("\"") && s.endsWith("\"")) {
-            s = s.substring(1, s.length() - 1);
-        }
-        return s.replace("\\\"", "\"")
-                .replace("\\\\", "\\")
-                .replace("\\n", "\n")
-                .replace("\\r", "\r")
-                .replace("\\t", "\t");
     }
 }

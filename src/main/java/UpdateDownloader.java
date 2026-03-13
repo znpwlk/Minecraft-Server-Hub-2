@@ -3,10 +3,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.util.function.Consumer;
 
 public class UpdateDownloader {
 
@@ -30,7 +27,12 @@ public class UpdateDownloader {
     }
 
     public static void downloadUpdate(String downloadUrl, String expectedSha256, String newVersion, DownloadCallback callback) {
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             try {
                 String currentJarPath = getCurrentJarPath();
                 if (currentJarPath == null) {
@@ -128,7 +130,8 @@ public class UpdateDownloader {
                 e.printStackTrace();
                 callback.onComplete(false, "下载失败: " + e.getMessage());
             }
-        }).start();
+            executor.shutdown();
+        });
     }
 
     public static DeleteResult checkAndDeleteOldVersion() {

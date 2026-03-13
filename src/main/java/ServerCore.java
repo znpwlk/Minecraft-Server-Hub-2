@@ -4,9 +4,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 
 public class ServerCore {
@@ -48,6 +46,12 @@ public class ServerCore {
     private transient boolean waitingForResponse = false;
     private transient String pendingCommand = null;
     private transient String pendingVersion = null;
+    
+    private static final ExecutorService threadPool = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r);
+        t.setDaemon(true);
+        return t;
+    });
     
     public ServerCore(String name, String jarPath, String minRam, String maxRam, String javaPath, String extraArgs, boolean autoMemory) {
         this.id = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
@@ -186,8 +190,8 @@ public class ServerCore {
             errorThread.setDaemon(true);
             outputThread.start();
             errorThread.start();
-            
-            new Thread(() -> {
+
+            threadPool.submit(() -> {
                 try {
                     int exitCode = process.waitFor();
                     if (exitCode != 0 && currentState == ServerState.STARTING && !hasEulaIssue) {
@@ -197,7 +201,7 @@ public class ServerCore {
                 } catch (InterruptedException e) {
                     setState(ServerState.STOPPED);
                 }
-            }).start();
+            });
             
             startProcessMonitor();
             
@@ -218,7 +222,7 @@ public class ServerCore {
         sendCommand("stop");
         log("正在关闭服务器，等待进程结束...", "INFO");
 
-        new Thread(() -> {
+        threadPool.submit(() -> {
             try {
                 boolean terminated = process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
                 if (!terminated && process.isAlive()) {
@@ -232,7 +236,7 @@ public class ServerCore {
                 Thread.currentThread().interrupt();
                 forceStop();
             }
-        }).start();
+        });
     }
     
     public void forceStop() {
@@ -358,7 +362,7 @@ public class ServerCore {
         if (processMonitor != null && !processMonitor.isShutdown()) {
             processMonitor.shutdown();
             try {
-                if (!processMonitor.awaitTermination(1, TimeUnit.SECONDS)) {
+                if (!processMonitor.awaitTermination(3, TimeUnit.SECONDS)) {
                     processMonitor.shutdownNow();
                 }
             } catch (InterruptedException e) {
@@ -387,14 +391,14 @@ public class ServerCore {
         
         startProcessMonitor();
         
-        new Thread(() -> {
+        threadPool.submit(() -> {
             handle.get().onExit().thenRun(() -> {
                 Platform.runLater(() -> {
                     log("服务器进程已结束", "INFO");
                     cleanupAfterStop();
                 });
             });
-        }).start();
+        });
         
         return true;
     }
@@ -792,11 +796,41 @@ public class ServerCore {
         }
     }
     
+    private transient final Object logBufferLock = new Object();
+    private transient final java.util.List<String> logBuffer = new java.util.ArrayList<>();
+    private transient long lastLogFlush = 0;
+    private static final long LOG_FLUSH_INTERVAL = 100;
+
     private void log(String message, String level) {
         if (logCallback != null) {
-            Platform.runLater(() -> logCallback.accept(message, level));
+            synchronized (logBufferLock) {
+                logBuffer.add("[" + level + "] " + message);
+                long now = System.currentTimeMillis();
+                if (now - lastLogFlush >= LOG_FLUSH_INTERVAL || logBuffer.size() >= 10) {
+                    flushLogBuffer();
+                    lastLogFlush = now;
+                }
+            }
         }
         writeLogToFile(message, level);
+    }
+
+    private void flushLogBuffer() {
+        synchronized (logBufferLock) {
+            if (logBuffer.isEmpty()) return;
+            java.util.List<String> batch = new java.util.ArrayList<>(logBuffer);
+            logBuffer.clear();
+            Platform.runLater(() -> {
+                for (String msg : batch) {
+                    int bracketEnd = msg.indexOf("] ");
+                    if (bracketEnd > 0) {
+                        String level = msg.substring(1, bracketEnd);
+                        String message = msg.substring(bracketEnd + 2);
+                        logCallback.accept(message, level);
+                    }
+                }
+            });
+        }
     }
     
     private void writeLogToFile(String message, String level) {

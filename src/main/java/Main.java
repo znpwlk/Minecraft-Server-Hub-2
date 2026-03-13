@@ -39,6 +39,7 @@ public class Main extends Application {
     private String backgroundImagePath = "";
     private String animationMode = "slide";
     private boolean autoCheckUpdate = true;
+    private int notificationDuration = 5;
 
     private double xOffset = 0;
     private double yOffset = 0;
@@ -175,6 +176,15 @@ public class Main extends Application {
                     int end = content.indexOf("\"", start);
                     if (end > start) {
                         autoCheckUpdate = Boolean.parseBoolean(content.substring(start, end));
+                    }
+                }
+                if (content.contains("\"notificationDuration\"")) {
+                    int start = content.indexOf("\"notificationDuration\"") + 24;
+                    int end = content.indexOf("\"", start);
+                    if (end > start) {
+                        try {
+                            notificationDuration = Integer.parseInt(content.substring(start, end));
+                        } catch (NumberFormatException ignored) {}
                     }
                 }
             }
@@ -314,6 +324,18 @@ public class Main extends Application {
                 content = content.replace("}", ",\"autoCheckUpdate\":\"" + autoCheckUpdate + "\"}");
             }
 
+            if (content.contains("\"notificationDuration\"")) {
+                int start = content.indexOf("\"notificationDuration\"") + 24;
+                int end = content.indexOf("\"", start);
+                if (end > start) {
+                    content = content.substring(0, start) + notificationDuration + content.substring(end);
+                } else {
+                    content = content.replace("}", ",\"notificationDuration\":\"" + notificationDuration + "\"}");
+                }
+            } else {
+                content = content.replace("}", ",\"notificationDuration\":\"" + notificationDuration + "\"}");
+            }
+
             java.nio.file.Files.write(configFile.toPath(), content.getBytes());
         } catch (Exception e) {
             System.out.println("保存背景配置失败: " + e.getMessage());
@@ -370,6 +392,43 @@ public class Main extends Application {
     public void setAutoCheckUpdate(boolean autoCheck) {
         autoCheckUpdate = autoCheck;
         saveAutoCheckUpdate();
+    }
+
+    public int getNotificationDuration() {
+        return notificationDuration;
+    }
+
+    public void setNotificationDuration(int duration) {
+        notificationDuration = Math.max(1, Math.min(30, duration));
+        saveNotificationDuration();
+    }
+
+    private void saveNotificationDuration() {
+        try {
+            File configFile = new File("msh/config.json");
+            String content = "{}";
+            if (configFile.exists()) {
+                content = new String(java.nio.file.Files.readAllBytes(configFile.toPath()));
+            } else {
+                configFile.getParentFile().mkdirs();
+            }
+
+            if (content.contains("\"notificationDuration\"")) {
+                int start = content.indexOf("\"notificationDuration\"") + 24;
+                int end = content.indexOf("\"", start);
+                if (end > start) {
+                    content = content.substring(0, start) + notificationDuration + content.substring(end);
+                } else {
+                    content = content.replace("}", ",\"notificationDuration\":\"" + notificationDuration + "\"}");
+                }
+            } else {
+                content = content.replace("}", ",\"notificationDuration\":\"" + notificationDuration + "\"}");
+            }
+
+            java.nio.file.Files.write(configFile.toPath(), content.getBytes());
+        } catch (Exception e) {
+            System.out.println("保存通知时长设置失败: " + e.getMessage());
+        }
     }
 
     private void saveAutoCheckUpdate() {
@@ -687,7 +746,7 @@ public class Main extends Application {
             ParallelTransition enter = new ParallelTransition(slideIn, fadeIn);
             enter.play();
 
-            PauseTransition delay = new PauseTransition(Duration.seconds(3));
+            PauseTransition delay = new PauseTransition(Duration.seconds(notificationDuration));
             delay.setOnFinished(e -> hideNotification(notification));
             delay.play();
         });
@@ -731,12 +790,32 @@ public class Main extends Application {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Button closeBtn = new Button("✕");
-        closeBtn.setFont(Font.font("Microsoft YaHei", 12));
+        closeBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
         closeBtn.setTextFill(Color.WHITE);
         closeBtn.setStyle(
-            "-fx-background-color: transparent;" +
-            "-fx-cursor: hand;"
+            "-fx-background-color: rgba(255,255,255,0.2);" +
+            "-fx-background-radius: 4;" +
+            "-fx-cursor: hand;" +
+            "-fx-min-width: 24;" +
+            "-fx-min-height: 24;" +
+            "-fx-padding: 0;"
         );
+        closeBtn.setOnMouseEntered(e -> closeBtn.setStyle(
+            "-fx-background-color: rgba(255,255,255,0.4);" +
+            "-fx-background-radius: 4;" +
+            "-fx-cursor: hand;" +
+            "-fx-min-width: 24;" +
+            "-fx-min-height: 24;" +
+            "-fx-padding: 0;"
+        ));
+        closeBtn.setOnMouseExited(e -> closeBtn.setStyle(
+            "-fx-background-color: rgba(255,255,255,0.2);" +
+            "-fx-background-radius: 4;" +
+            "-fx-cursor: hand;" +
+            "-fx-min-width: 24;" +
+            "-fx-min-height: 24;" +
+            "-fx-padding: 0;"
+        ));
         closeBtn.setOnAction(e -> hideNotification(notification));
 
         notification.getChildren().addAll(iconLabel, msgLabel, spacer, closeBtn);
@@ -757,7 +836,73 @@ public class Main extends Application {
             );
         });
 
+        setupNotificationDrag(notification, bgColor);
+
         return notification;
+    }
+
+    private void setupNotificationDrag(HBox notification, String bgColor) {
+        final double[] dragStartX = new double[1];
+        final double[] notificationStartX = new double[1];
+        final boolean[] isDragging = new boolean[1];
+
+        notification.setOnMousePressed(e -> {
+            dragStartX[0] = e.getSceneX();
+            notificationStartX[0] = notification.getTranslateX();
+            isDragging[0] = false;
+            e.consume();
+        });
+
+        notification.setOnMouseDragged(e -> {
+            double offsetX = e.getSceneX() - dragStartX[0];
+
+            if (Math.abs(offsetX) > 5) {
+                isDragging[0] = true;
+            }
+
+            double newX = notificationStartX[0] + offsetX;
+            newX = Math.max(-100, Math.min(newX, 200));
+            notification.setTranslateX(newX);
+            e.consume();
+        });
+
+        notification.setOnMouseReleased(e -> {
+            if (!isDragging[0]) return;
+
+            double currentX = notification.getTranslateX();
+
+            if (currentX > 80) {
+                hideNotificationToRight(notification);
+            } else if (currentX < -30) {
+                animateNotificationReset(notification, bgColor);
+            } else {
+                animateNotificationReset(notification, bgColor);
+            }
+        });
+    }
+
+    private void animateNotificationReset(HBox notification, String bgColor) {
+        TranslateTransition reset = new TranslateTransition(Duration.millis(200), notification);
+        reset.setToX(0);
+        reset.setInterpolator(Interpolator.EASE_OUT);
+        reset.play();
+    }
+
+    private void hideNotificationToRight(HBox notification) {
+        if (!notificationContainer.getChildren().contains(notification)) {
+            return;
+        }
+
+        TranslateTransition slideOut = new TranslateTransition(Duration.millis(200), notification);
+        slideOut.setToX(400);
+        slideOut.setInterpolator(Interpolator.EASE_IN);
+
+        FadeTransition fadeOut = new FadeTransition(Duration.millis(200), notification);
+        fadeOut.setToValue(0);
+
+        ParallelTransition exit = new ParallelTransition(slideOut, fadeOut);
+        exit.setOnFinished(e -> notificationContainer.getChildren().remove(notification));
+        exit.play();
     }
 
     private void hideNotification(HBox notification) {
@@ -812,6 +957,7 @@ public class Main extends Application {
         serverListBox.setPadding(new Insets(10));
         serverListBox.setAlignment(Pos.CENTER_LEFT);
 
+        boolean hasExternalServer = false;
         for (ServerCore server : activeServers) {
             String stateText = switch (server.getState()) {
                 case STARTING -> "启动中";
@@ -819,6 +965,11 @@ public class Main extends Application {
                 case STOPPING -> "停止中";
                 default -> "";
             };
+
+            if (server.isReattached()) {
+                stateText = "外部启动，只能强制关闭";
+                hasExternalServer = true;
+            }
 
             HBox serverRow = new HBox(8);
             serverRow.setAlignment(Pos.CENTER_LEFT);
@@ -836,7 +987,7 @@ public class Main extends Application {
 
             Label stateLabel = new Label("(" + stateText + ")");
             stateLabel.setFont(Font.font("Microsoft YaHei", 12));
-            stateLabel.setTextFill(Color.web("#999999"));
+            stateLabel.setTextFill(server.isReattached() ? Color.web("#FF9800") : Color.web("#999999"));
 
             ServerCore targetServer = server;
             nameLabel.setOnMouseEntered(e -> nameLabel.setTextFill(Color.web("#64B5F6")));
@@ -852,10 +1003,22 @@ public class Main extends Application {
 
         serverListScroll.setContent(serverListBox);
 
+        String closeButtonText = hasExternalServer ? "强制关闭并退出" : "关闭服务器并退出";
         java.util.List<DialogButton> buttons = java.util.Arrays.asList(
-            new DialogButton("关闭服务器并退出", "#f44336", "#d32f2f", "#FFFFFF", () -> {
-                new Thread(() -> {
-                    serverManager.stopAll();
+            new DialogButton(closeButtonText, "#f44336", "#d32f2f", "#FFFFFF", () -> {
+                java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                    Thread t = new Thread(r);
+                    t.setDaemon(true);
+                    return t;
+                });
+                executor.submit(() -> {
+                    for (ServerCore server : activeServers) {
+                        if (server.isReattached()) {
+                            server.forceStop();
+                        } else {
+                            server.stop();
+                        }
+                    }
                     int waitCount = 0;
                     while (serverManager.getRunningCount() > 0 && waitCount < 30) {
                         try {
@@ -865,12 +1028,10 @@ public class Main extends Application {
                     }
                     if (serverManager.getRunningCount() > 0) {
                         serverManager.forceStopAll();
-                        try {
-                            Thread.sleep(1000);
-                        } catch (InterruptedException ignored) {}
                     }
                     Platform.runLater(this::cleanupAndExit);
-                }).start();
+                    executor.shutdown();
+                });
             }),
             new DialogButton("最小化到托盘", "#e3f2fd", "#bbdefb", "#333333", this::minimizeToTray),
             new DialogButton("后台运行", "#f5f5f5", "#e0e0e0", "#333333", () -> primaryStage.hide()),
@@ -900,7 +1061,12 @@ public class Main extends Application {
     }
     
     private void checkAndAttachRunningServers() {
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             for (ServerCore server : serverManager.getServers()) {
                 if (server.getProcessPid() <= 0) continue;
 
@@ -908,20 +1074,28 @@ public class Main extends Application {
                     server.setProcessPid(-1);
                 }
             }
-        }).start();
+            executor.shutdown();
+        });
     }
 
     private void checkUpdateOnStartup(boolean showAllUpdates) {
-        new Thread(() -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        executor.submit(() -> {
             try {
                 UpdateChecker checker = new UpdateChecker(VERSION);
                 UpdateChecker.UpdateResult result = checker.checkUpdate();
 
                 if (result.status == UpdateChecker.UpdateStatus.NO_UPDATE) {
+                    executor.shutdown();
                     return;
                 }
 
                 if (!showAllUpdates && result.status != UpdateChecker.UpdateStatus.FORCE_UPDATE) {
+                    executor.shutdown();
                     return;
                 }
 
@@ -934,9 +1108,9 @@ public class Main extends Application {
                 });
 
             } catch (Exception e) {
-                System.out.println("启动时检查更新失败: " + e.getMessage());
             }
-        }).start();
+            executor.shutdown();
+        });
     }
 
     public void showForceUpdateDialog(UpdateChecker.UpdateResult result) {

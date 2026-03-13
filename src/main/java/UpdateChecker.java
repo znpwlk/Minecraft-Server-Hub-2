@@ -67,7 +67,6 @@ public class UpdateChecker {
             return result;
 
         } catch (Exception e) {
-            e.printStackTrace();
             return new UpdateResult(UpdateStatus.NO_UPDATE);
         }
     }
@@ -77,7 +76,6 @@ public class UpdateChecker {
             String jsonResponse = fetchFromServer(CHANGELOG_URL);
             return parseChangelogJson(jsonResponse);
         } catch (Exception e) {
-            e.printStackTrace();
             return "获取更新日志失败";
         }
     }
@@ -132,8 +130,8 @@ public class UpdateChecker {
         URL url = new URI(urlString).toURL();
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
-        conn.setConnectTimeout(5000);
-        conn.setReadTimeout(5000);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(10000);
 
         StringBuilder response = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(

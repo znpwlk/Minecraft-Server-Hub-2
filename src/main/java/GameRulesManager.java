@@ -22,9 +22,11 @@ public class GameRulesManager {
         try {
             String content = downloadContent(INDEX_URL);
             if (content != null) {
-                indexData = parseJson(content);
-                versionMapping = (Map<String, String>) indexData.get("versionMapping");
-                defaultVersion = (String) indexData.get("defaultVersion");
+                indexData = JsonUtils.parseObject(content);
+                @SuppressWarnings("unchecked")
+                Map<String, String> mapping = (Map<String, String>) indexData.get("versionMapping");
+                versionMapping = mapping;
+                defaultVersion = JsonUtils.getString(indexData, "defaultVersion", null);
             }
         } catch (Exception e) {
             System.out.println("下载索引失败: " + e.getMessage());
@@ -43,22 +45,15 @@ public class GameRulesManager {
         }
         
         try {
-            Map<String, Object> data = parseJson(content);
-            List<?> rawList = (List<?>) data.get("gameRules");
+            Map<String, Object> data = JsonUtils.parseObject(content);
+            List<Object> rawList = JsonUtils.getList(data, "gameRules");
 
             List<GameRuleItem> items = new ArrayList<>();
-            if (rawList != null) {
-                for (Object obj : rawList) {
-                    if (obj instanceof Map<?, ?>) {
-                        Map<?, ?> ruleMap = (Map<?, ?>) obj;
-                        Map<String, Object> typedMap = new HashMap<>();
-                        for (Map.Entry<?, ?> entry : ruleMap.entrySet()) {
-                            if (entry.getKey() instanceof String) {
-                                typedMap.put((String) entry.getKey(), entry.getValue());
-                            }
-                        }
-                        items.add(GameRuleItem.fromMap(typedMap));
-                    }
+            for (Object obj : rawList) {
+                if (obj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> typedMap = (Map<String, Object>) obj;
+                    items.add(GameRuleItem.fromMap(typedMap));
                 }
             }
             return items;
@@ -179,213 +174,6 @@ public class GameRulesManager {
         } catch (Exception e) {
             System.out.println("保存缓存失败: " + e.getMessage());
         }
-    }
-    
-    private Map<String, Object> parseJson(String json) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        json = json.trim();
-        
-        if (!json.startsWith("{") || !json.endsWith("}")) {
-            return result;
-        }
-        
-        json = json.substring(1, json.length() - 1).trim();
-        
-        List<String> tokens = tokenize(json);
-        
-        for (int i = 0; i < tokens.size(); i += 2) {
-            if (i + 1 >= tokens.size()) break;
-            
-            String key = tokens.get(i);
-            String value = tokens.get(i + 1);
-            
-            key = key.trim();
-            if (key.startsWith("\"") && key.endsWith("\"")) {
-                key = key.substring(1, key.length() - 1);
-            }
-            
-            value = value.trim();
-            
-            if (value.startsWith("{") && value.endsWith("}")) {
-                result.put(key, parseJson(value));
-            } else if (value.startsWith("[") && value.endsWith("]")) {
-                result.put(key, parseArray(value));
-            } else if (value.startsWith("\"") && value.endsWith("\"")) {
-                result.put(key, value.substring(1, value.length() - 1));
-            } else if (value.equals("true")) {
-                result.put(key, true);
-            } else if (value.equals("false")) {
-                result.put(key, false);
-            } else if (value.equals("null")) {
-                result.put(key, null);
-            } else {
-                try {
-                    if (value.contains(".")) {
-                        result.put(key, Double.parseDouble(value));
-                    } else {
-                        result.put(key, Long.parseLong(value));
-                    }
-                } catch (NumberFormatException e) {
-                    result.put(key, value);
-                }
-            }
-        }
-        
-        return result;
-    }
-    
-    private List<String> tokenize(String json) {
-        List<String> tokens = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int braceDepth = 0;
-        int bracketDepth = 0;
-        boolean inString = false;
-        boolean escape = false;
-        
-        for (char c : json.toCharArray()) {
-            if (escape) {
-                current.append(c);
-                escape = false;
-                continue;
-            }
-            
-            if (c == '\\') {
-                current.append(c);
-                escape = true;
-                continue;
-            }
-            
-            if (c == '"' && braceDepth == 0 && bracketDepth == 0) {
-                inString = !inString;
-                current.append(c);
-                continue;
-            }
-            
-            if (!inString) {
-                if (c == '{') braceDepth++;
-                if (c == '}') braceDepth--;
-                if (c == '[') bracketDepth++;
-                if (c == ']') bracketDepth--;
-                
-                if (c == ':' && braceDepth == 0 && bracketDepth == 0) {
-                    tokens.add(current.toString().trim());
-                    current = new StringBuilder();
-                    continue;
-                }
-                
-                if (c == ',' && braceDepth == 0 && bracketDepth == 0) {
-                    tokens.add(current.toString().trim());
-                    current = new StringBuilder();
-                    continue;
-                }
-            }
-            
-            current.append(c);
-        }
-        
-        if (current.length() > 0) {
-            tokens.add(current.toString().trim());
-        }
-        
-        return tokens;
-    }
-    
-    private List<Object> parseArray(String json) {
-        List<Object> result = new ArrayList<>();
-        json = json.trim();
-        
-        if (!json.startsWith("[") || !json.endsWith("]")) {
-            return result;
-        }
-        
-        json = json.substring(1, json.length() - 1).trim();
-        
-        if (json.isEmpty()) {
-            return result;
-        }
-        
-        List<String> tokens = splitArray(json);
-        
-        for (String token : tokens) {
-            token = token.trim();
-            if (token.isEmpty()) continue;
-            
-            if (token.startsWith("{") && token.endsWith("}")) {
-                result.add(parseJson(token));
-            } else if (token.startsWith("[") && token.endsWith("]")) {
-                result.add(parseArray(token));
-            } else if (token.startsWith("\"") && token.endsWith("\"")) {
-                result.add(token.substring(1, token.length() - 1));
-            } else if (token.equals("true")) {
-                result.add(true);
-            } else if (token.equals("false")) {
-                result.add(false);
-            } else if (token.equals("null")) {
-                result.add(null);
-            } else {
-                try {
-                    if (token.contains(".")) {
-                        result.add(Double.parseDouble(token));
-                    } else {
-                        result.add(Long.parseLong(token));
-                    }
-                } catch (NumberFormatException e) {
-                    result.add(token);
-                }
-            }
-        }
-        
-        return result;
-    }
-    
-    private List<String> splitArray(String json) {
-        List<String> tokens = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int braceDepth = 0;
-        int bracketDepth = 0;
-        boolean inString = false;
-        boolean escape = false;
-        
-        for (char c : json.toCharArray()) {
-            if (escape) {
-                current.append(c);
-                escape = false;
-                continue;
-            }
-            
-            if (c == '\\') {
-                current.append(c);
-                escape = true;
-                continue;
-            }
-            
-            if (c == '"') {
-                inString = !inString;
-                current.append(c);
-                continue;
-            }
-            
-            if (!inString) {
-                if (c == '{') braceDepth++;
-                if (c == '}') braceDepth--;
-                if (c == '[') bracketDepth++;
-                if (c == ']') bracketDepth--;
-                
-                if (c == ',' && braceDepth == 0 && bracketDepth == 0) {
-                    tokens.add(current.toString().trim());
-                    current = new StringBuilder();
-                    continue;
-                }
-            }
-            
-            current.append(c);
-        }
-        
-        if (current.length() > 0) {
-            tokens.add(current.toString().trim());
-        }
-        
-        return tokens;
     }
     
     public String getMatchedVersion(String serverVersion) {

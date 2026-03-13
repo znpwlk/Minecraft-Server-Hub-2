@@ -1,7 +1,6 @@
 import javafx.animation.*;
 import javafx.scene.Node;
 import javafx.scene.layout.StackPane;
-import javafx.scene.paint.Color;
 import javafx.util.Duration;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -16,6 +15,62 @@ public class AnimationUtils {
     
     public interface TransitionEffect {
         Animation create(StackPane container, Node outgoing, Node incoming);
+    }
+
+    @FunctionalInterface
+    private interface AnimationFrameCallback {
+        void onFrame(Node outgoing, Node incoming, double progress);
+    }
+
+    private static double easeInOut(double t) {
+        return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    private static Animation createHighFpsAnimation(StackPane container, Node outgoing, Node incoming, AnimationFrameCallback callback) {
+        Timeline timeline = new Timeline();
+        timeline.setCycleCount(1);
+
+        javafx.animation.AnimationTimer timer = new javafx.animation.AnimationTimer() {
+            private long startTime = 0;
+            private final long durationNanos = 300_000_000L;
+            private boolean finished = false;
+
+            @Override
+            public void handle(long now) {
+                if (finished) return;
+
+                if (startTime == 0) {
+                    startTime = now;
+                }
+
+                long elapsed = now - startTime;
+                double progress = Math.min(1.0, (double) elapsed / durationNanos);
+
+                callback.onFrame(outgoing, incoming, progress);
+
+                if (progress >= 1.0) {
+                    finished = true;
+                    stop();
+                    timeline.stop();
+                    resetNodeState(outgoing);
+                    if (container.getChildren().contains(outgoing)) {
+                        container.getChildren().remove(outgoing);
+                    }
+                }
+            }
+        };
+
+        timeline.getKeyFrames().add(new KeyFrame(Duration.millis(1), e -> timer.start()));
+
+        timeline.setOnFinished(e -> {
+            timer.stop();
+            resetNodeState(outgoing);
+            if (container.getChildren().contains(outgoing)) {
+                container.getChildren().remove(outgoing);
+            }
+        });
+
+        return timeline;
     }
     
     public static void stopAnimation(Node node) {
@@ -47,65 +102,33 @@ public class AnimationUtils {
     }
     
     public static final TransitionEffect SWIPE_LEFT = (container, outgoing, incoming) -> {
-        double width = 680;
-        
+        double width = container.getWidth() > 0 ? container.getWidth() : 680;
+
         resetNodeState(outgoing);
         resetNodeState(incoming);
         incoming.setTranslateX(width);
-        
-        Timeline timeline = new Timeline();
-        timeline.setCycleCount(1);
-        
-        timeline.getKeyFrames().addAll(
-            new KeyFrame(Duration.ZERO,
-                new KeyValue(outgoing.translateXProperty(), 0, Interpolator.EASE_BOTH),
-                new KeyValue(incoming.translateXProperty(), width, Interpolator.EASE_BOTH)
-            ),
-            new KeyFrame(ANIMATION_DURATION,
-                new KeyValue(outgoing.translateXProperty(), -width, Interpolator.EASE_BOTH),
-                new KeyValue(incoming.translateXProperty(), 0, Interpolator.EASE_BOTH)
-            )
-        );
-        
-        timeline.setOnFinished(e -> {
-            resetNodeState(outgoing);
-            if (container.getChildren().contains(outgoing)) {
-                container.getChildren().remove(outgoing);
-            }
-        });
-        
-        return timeline;
+
+        return createHighFpsAnimation(container, outgoing, incoming,
+            (out, in, progress) -> {
+                double eased = easeInOut(progress);
+                out.setTranslateX(-width * eased);
+                in.setTranslateX(width * (1 - eased));
+            });
     };
     
     public static final TransitionEffect SWIPE_RIGHT = (container, outgoing, incoming) -> {
-        double width = 680;
-        
+        double width = container.getWidth() > 0 ? container.getWidth() : 680;
+
         resetNodeState(outgoing);
         resetNodeState(incoming);
         incoming.setTranslateX(-width);
-        
-        Timeline timeline = new Timeline();
-        timeline.setCycleCount(1);
-        
-        timeline.getKeyFrames().addAll(
-            new KeyFrame(Duration.ZERO,
-                new KeyValue(outgoing.translateXProperty(), 0, Interpolator.EASE_BOTH),
-                new KeyValue(incoming.translateXProperty(), -width, Interpolator.EASE_BOTH)
-            ),
-            new KeyFrame(ANIMATION_DURATION,
-                new KeyValue(outgoing.translateXProperty(), width, Interpolator.EASE_BOTH),
-                new KeyValue(incoming.translateXProperty(), 0, Interpolator.EASE_BOTH)
-            )
-        );
-        
-        timeline.setOnFinished(e -> {
-            resetNodeState(outgoing);
-            if (container.getChildren().contains(outgoing)) {
-                container.getChildren().remove(outgoing);
-            }
-        });
-        
-        return timeline;
+
+        return createHighFpsAnimation(container, outgoing, incoming,
+            (out, in, progress) -> {
+                double eased = easeInOut(progress);
+                out.setTranslateX(width * eased);
+                in.setTranslateX(-width * (1 - eased));
+            });
     };
     
     public static final TransitionEffect FORWARD = (container, outgoing, incoming) -> {
@@ -301,79 +324,26 @@ public class AnimationUtils {
     
     public static void applyGlowPulse(Node node, javafx.scene.effect.DropShadow glowEffect) {
         stopAnimation(node);
-        
-        java.util.Random random = new java.util.Random();
-        
+
         double minRadius = 15, maxRadius = 28;
         double minSpread = 0.25, maxSpread = 0.45;
-        double minAlpha = 0.5, maxAlpha = 0.85;
-        int minBlue = 160, maxBlue = 255;
-        
-        javafx.animation.AnimationTimer breathingTimer = new javafx.animation.AnimationTimer() {
-            private long cycleStart = 0;
-            private long cycleDuration = 0;
-            private long pauseDuration = 0;
-            private boolean inPause = false;
-            
-            private void startNewCycle() {
-                cycleDuration = (long)(3500 + random.nextDouble() * 1500);
-                pauseDuration = 0;
-                cycleStart = System.nanoTime();
-                inPause = false;
-            }
-            
-            private double easeInOut(double t) {
-                return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-            }
-            
-            @Override
-            public void handle(long now) {
-                if (cycleStart == 0) {
-                    startNewCycle();
-                    return;
-                }
-                
-                long elapsed = now - cycleStart;
-                
-                if (inPause) {
-                    if (elapsed >= pauseDuration * 1000000L) {
-                        startNewCycle();
-                    }
-                    return;
-                }
-                
-                double rawProgress = (double)elapsed / (cycleDuration * 1000000L);
-                
-                if (rawProgress >= 1.0) {
-                    inPause = true;
-                    cycleStart = now;
-                    glowEffect.setRadius(minRadius);
-                    glowEffect.setSpread(minSpread);
-                    glowEffect.setColor(Color.rgb(80, 160, minBlue, minAlpha));
-                    return;
-                }
-                
-                double progress;
-                if (rawProgress < 0.5) {
-                    progress = easeInOut(rawProgress * 2);
-                } else {
-                    progress = easeInOut(2 - rawProgress * 2);
-                }
-                
-                double currentRadius = minRadius + (maxRadius - minRadius) * progress;
-                double currentSpread = minSpread + (maxSpread - minSpread) * progress;
-                double currentAlpha = minAlpha + (maxAlpha - minAlpha) * progress;
-                int currentBlue = (int)(minBlue + (maxBlue - minBlue) * progress);
-                int currentGreen = (int)(160 + (40 * progress));
-                
-                glowEffect.setRadius(currentRadius);
-                glowEffect.setSpread(currentSpread);
-                glowEffect.setColor(Color.rgb(80, currentGreen, currentBlue, currentAlpha));
-            }
-        };
-        
-        breathingTimer.start();
-        activeTimers.put(node, breathingTimer);
+
+        Timeline breathingTimeline = new Timeline();
+        breathingTimeline.setCycleCount(Animation.INDEFINITE);
+        breathingTimeline.setAutoReverse(true);
+
+        KeyValue kvRadiusStart = new KeyValue(glowEffect.radiusProperty(), minRadius);
+        KeyValue kvRadiusEnd = new KeyValue(glowEffect.radiusProperty(), maxRadius);
+        KeyValue kvSpreadStart = new KeyValue(glowEffect.spreadProperty(), minSpread);
+        KeyValue kvSpreadEnd = new KeyValue(glowEffect.spreadProperty(), maxSpread);
+
+        KeyFrame kfStart = new KeyFrame(Duration.ZERO, kvRadiusStart, kvSpreadStart);
+        KeyFrame kfEnd = new KeyFrame(Duration.millis(3500), kvRadiusEnd, kvSpreadEnd);
+
+        breathingTimeline.getKeyFrames().addAll(kfStart, kfEnd);
+
+        registerAnimation(node, breathingTimeline);
+        breathingTimeline.play();
     }
     
     public static void applyStaggeredFadeUp(java.util.List<? extends Node> nodes, double baseDelayMillis) {
