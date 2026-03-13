@@ -26,7 +26,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 
 public class Main extends Application {
-    public static final String VERSION = "2.0";
+    public static final String VERSION = "2.1";
     
     private Stage primaryStage;
     private StackPane rootContainer;
@@ -1114,6 +1114,7 @@ public class Main extends Application {
     }
 
     public void showForceUpdateDialog(UpdateChecker.UpdateResult result) {
+        final String[] newJarPath = new String[1];
         StackPane overlay = new StackPane();
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.85);");
         overlay.setPrefSize(900, 600);
@@ -1187,6 +1188,21 @@ public class Main extends Application {
         linkBox.setAlignment(Pos.CENTER_LEFT);
         linkBox.getChildren().addAll(linkTitle, downloadLink);
 
+        javafx.scene.control.ProgressBar progressBar = new javafx.scene.control.ProgressBar(0);
+        progressBar.setPrefWidth(350);
+        progressBar.setVisible(false);
+        progressBar.setStyle("-fx-accent: #d32f2f;");
+
+        Label progressLabel = new Label("");
+        progressLabel.setFont(Font.font("Microsoft YaHei", 12));
+        progressLabel.setTextFill(Color.web("#555"));
+        progressLabel.setVisible(false);
+
+        VBox progressBox = new VBox(8);
+        progressBox.setAlignment(Pos.CENTER);
+        progressBox.getChildren().addAll(progressBar, progressLabel);
+        progressBox.setVisible(false);
+
         Button updateBtn = new Button("立即更新");
         updateBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
         updateBtn.setTextFill(Color.WHITE);
@@ -1208,8 +1224,46 @@ public class Main extends Application {
             "-fx-cursor: hand;"
         ));
         updateBtn.setOnAction(e -> {
-            contentPanel.showUpdateSettings();
-            rootContainer.getChildren().remove(overlay);
+            updateBtn.setVisible(false);
+            linkBox.setVisible(false);
+            progressBox.setVisible(true);
+            progressBar.setVisible(true);
+            progressLabel.setVisible(true);
+            progressLabel.setText("正在下载更新...");
+
+            UpdateDownloader.downloadUpdate(
+                result.downloadUrl,
+                result.sha256,
+                result.latestVersion,
+                new UpdateDownloader.DownloadCallback() {
+                    @Override
+                    public void onProgress(int percentage) {
+                        Platform.runLater(() -> {
+                            progressBar.setProgress(percentage / 100.0);
+                            progressLabel.setText("下载进度: " + percentage + "%");
+                        });
+                    }
+
+                    @Override
+                    public void onComplete(boolean success, String message) {
+                    }
+
+                    @Override
+                    public void onComplete(boolean success, String message, String newJarPath) {
+                        Platform.runLater(() -> {
+                            if (success) {
+                                progressLabel.setTextFill(Color.web("#2e7d32"));
+                                progressLabel.setText(message);
+                                showForceUpdateRestartConfirm(newJarPath);
+                            } else {
+                                progressLabel.setTextFill(Color.web("#d32f2f"));
+                                progressLabel.setText(message);
+                                updateBtn.setVisible(true);
+                            }
+                        });
+                    }
+                }
+            );
         });
 
         VBox btnBox = new VBox(12);
@@ -1217,7 +1271,98 @@ public class Main extends Application {
         btnBox.setPadding(new Insets(15, 0, 0, 0));
         btnBox.getChildren().addAll(updateBtn);
 
-        dialog.getChildren().addAll(warningIcon, titleLabel, urgentLabel, infoBox, linkBox, btnBox);
+        dialog.getChildren().addAll(warningIcon, titleLabel, urgentLabel, infoBox, linkBox, progressBox, btnBox);
+        overlay.getChildren().add(dialog);
+        rootContainer.getChildren().add(overlay);
+
+        fadeIn(overlay, 300);
+
+        dialog.setOpacity(0);
+        dialog.setScaleX(0.8);
+        dialog.setScaleY(0.8);
+
+        javafx.animation.FadeTransition fade = new javafx.animation.FadeTransition(javafx.util.Duration.millis(300), dialog);
+        fade.setFromValue(0);
+        fade.setToValue(1);
+
+        javafx.animation.ScaleTransition scale = new javafx.animation.ScaleTransition(javafx.util.Duration.millis(300), dialog);
+        scale.setFromX(0.8);
+        scale.setFromY(0.8);
+        scale.setToX(1);
+        scale.setToY(1);
+
+        javafx.animation.ParallelTransition pt = new javafx.animation.ParallelTransition(fade, scale);
+        pt.play();
+    }
+
+    private void showForceUpdateRestartConfirm(String newJarPath) {
+        int runningCount = serverManager.getRunningCount();
+
+        StackPane overlay = new StackPane();
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.9);");
+        overlay.setPrefSize(900, 600);
+        overlay.setAlignment(Pos.CENTER);
+
+        VBox dialog = new VBox(15);
+        dialog.setAlignment(Pos.CENTER);
+        dialog.setPadding(new Insets(30, 40, 30, 40));
+        dialog.setMaxWidth(450);
+        dialog.setStyle(
+            "-fx-background-color: #ffebee;" +
+            "-fx-background-radius: 16;" +
+            "-fx-border-color: #f44336;" +
+            "-fx-border-width: 3;" +
+            "-fx-border-radius: 16;" +
+            "-fx-effect: dropshadow(gaussian, rgba(244,67,54,0.5), 30, 0, 0, 0);"
+        );
+
+        javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+        icon.setContent("M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z");
+        icon.setFill(Color.web("#d32f2f"));
+        icon.setScaleX(1.5);
+        icon.setScaleY(1.5);
+
+        Label titleLabel = new Label("更新下载完成");
+        titleLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 22));
+        titleLabel.setTextFill(Color.web("#c62828"));
+
+        Label messageLabel;
+        if (runningCount > 0) {
+            messageLabel = new Label("有 " + runningCount + " 个服务器正在运行，是否关闭服务器并重启程序？\n\n注意：强制更新必须重启才能生效！");
+        } else {
+            messageLabel = new Label("是否立即重启程序以完成更新？\n\n注意：强制更新必须重启才能生效！");
+        }
+        messageLabel.setFont(Font.font("Microsoft YaHei", 13));
+        messageLabel.setTextFill(Color.web("#555"));
+        messageLabel.setWrapText(true);
+        messageLabel.setAlignment(Pos.CENTER);
+
+        Button restartBtn = new Button("立即重启");
+        restartBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
+        restartBtn.setTextFill(Color.WHITE);
+        restartBtn.setPrefWidth(200);
+        restartBtn.setPrefHeight(45);
+        restartBtn.setStyle(
+            "-fx-background-color: #d32f2f;" +
+            "-fx-background-radius: 8;" +
+            "-fx-cursor: hand;"
+        );
+        restartBtn.setOnMouseEntered(e -> restartBtn.setStyle(
+            "-fx-background-color: #b71c1c;" +
+            "-fx-background-radius: 8;" +
+            "-fx-cursor: hand;"
+        ));
+        restartBtn.setOnMouseExited(e -> restartBtn.setStyle(
+            "-fx-background-color: #d32f2f;" +
+            "-fx-background-radius: 8;" +
+            "-fx-cursor: hand;"
+        ));
+        restartBtn.setOnAction(e -> {
+            serverManager.stopAll();
+            UpdateDownloader.launchNewVersion(newJarPath);
+        });
+
+        dialog.getChildren().addAll(icon, titleLabel, messageLabel, restartBtn);
         overlay.getChildren().add(dialog);
         rootContainer.getChildren().add(overlay);
 
@@ -1242,24 +1387,183 @@ public class Main extends Application {
     }
 
     public void showNormalUpdateDialog(UpdateChecker.UpdateResult result) {
-        StringBuilder message = new StringBuilder();
-        message.append("发现新版本: ").append(result.latestVersion).append("\n");
-        message.append("当前版本: ").append(VERSION).append("\n\n");
-        message.append("发布日期: ").append(result.updateDate).append("\n\n");
-        message.append("更新日志:\n");
-        message.append("• 新增服务器性能监控功能\n");
-        message.append("• 优化启动速度\n");
-        message.append("• 修复已知问题\n\n");
-        message.append("是否立即更新?");
+        final String[] newJarPath = new String[1];
+        Platform.runLater(() -> {
+            StackPane overlay = new StackPane();
+            overlay.setStyle("-fx-background-color: rgba(0,0,0,0.5);");
+            overlay.setPrefSize(900, 600);
+            overlay.setAlignment(Pos.CENTER);
 
-        java.util.List<DialogButton> buttons = java.util.Arrays.asList(
-            new DialogButton("立即更新", "#4CAF50", "#45a049", "#FFFFFF", () -> {
-                contentPanel.showUpdateSettings();
-            }),
-            new DialogButton("稍后提醒", "#757575", "#616161", "#FFFFFF", null)
-        );
+            VBox dialog = new VBox(15);
+            dialog.setAlignment(Pos.CENTER);
+            dialog.setPadding(new Insets(25, 35, 25, 35));
+            dialog.setMaxWidth(420);
+            dialog.setStyle(
+                "-fx-background-color: white;" +
+                "-fx-background-radius: 12;" +
+                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 20, 0, 0, 5);"
+            );
 
-        showGenericDialog("发现新版本", message.toString(), buttons, null);
+            javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+            icon.setContent("M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z");
+            icon.setFill(Color.web("#4CAF50"));
+            icon.setScaleX(1.5);
+            icon.setScaleY(1.5);
+
+            Label titleLabel = new Label("发现新版本");
+            titleLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 20));
+            titleLabel.setTextFill(Color.web("#333"));
+
+            VBox infoBox = new VBox(8);
+            infoBox.setAlignment(Pos.CENTER_LEFT);
+            infoBox.setPadding(new Insets(5, 0, 5, 0));
+
+            Label currentVerLabel = new Label("当前版本: " + VERSION);
+            currentVerLabel.setFont(Font.font("Microsoft YaHei", 13));
+            currentVerLabel.setTextFill(Color.web("#666"));
+
+            Label newVerLabel = new Label("最新版本: " + result.latestVersion);
+            newVerLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 13));
+            newVerLabel.setTextFill(Color.web("#4CAF50"));
+
+            Label dateLabel = new Label("发布日期: " + result.updateDate);
+            dateLabel.setFont(Font.font("Microsoft YaHei", 12));
+            dateLabel.setTextFill(Color.web("#888"));
+
+            infoBox.getChildren().addAll(currentVerLabel, newVerLabel, dateLabel);
+
+            javafx.scene.control.ProgressBar progressBar = new javafx.scene.control.ProgressBar(0);
+            progressBar.setPrefWidth(320);
+            progressBar.setVisible(false);
+            progressBar.setStyle("-fx-accent: #4CAF50;");
+
+            Label progressLabel = new Label("");
+            progressLabel.setFont(Font.font("Microsoft YaHei", 12));
+            progressLabel.setTextFill(Color.web("#666"));
+            progressLabel.setVisible(false);
+
+            VBox progressBox = new VBox(8);
+            progressBox.setAlignment(Pos.CENTER);
+            progressBox.getChildren().addAll(progressBar, progressLabel);
+            progressBox.setVisible(false);
+
+            HBox btnBox = new HBox(15);
+            btnBox.setAlignment(Pos.CENTER);
+            btnBox.setPadding(new Insets(10, 0, 0, 0));
+
+            Button updateBtn = new Button("立即更新");
+            updateBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
+            updateBtn.setTextFill(Color.WHITE);
+            updateBtn.setPrefWidth(120);
+            updateBtn.setPrefHeight(38);
+            updateBtn.setStyle(
+                "-fx-background-color: #4CAF50;" +
+                "-fx-background-radius: 6;" +
+                "-fx-cursor: hand;"
+            );
+            updateBtn.setOnMouseEntered(e -> updateBtn.setStyle(
+                "-fx-background-color: #45a049;" +
+                "-fx-background-radius: 6;" +
+                "-fx-cursor: hand;"
+            ));
+            updateBtn.setOnMouseExited(e -> updateBtn.setStyle(
+                "-fx-background-color: #4CAF50;" +
+                "-fx-background-radius: 6;" +
+                "-fx-cursor: hand;"
+            ));
+
+            Button laterBtn = new Button("稍后提醒");
+            laterBtn.setFont(Font.font("Microsoft YaHei", 14));
+            laterBtn.setTextFill(Color.WHITE);
+            laterBtn.setPrefWidth(120);
+            laterBtn.setPrefHeight(38);
+            laterBtn.setStyle(
+                "-fx-background-color: #757575;" +
+                "-fx-background-radius: 6;" +
+                "-fx-cursor: hand;"
+            );
+            laterBtn.setOnMouseEntered(e -> laterBtn.setStyle(
+                "-fx-background-color: #616161;" +
+                "-fx-background-radius: 6;" +
+                "-fx-cursor: hand;"
+            ));
+            laterBtn.setOnMouseExited(e -> laterBtn.setStyle(
+                "-fx-background-color: #757575;" +
+                "-fx-background-radius: 6;" +
+                "-fx-cursor: hand;"
+            ));
+            laterBtn.setOnAction(e -> rootContainer.getChildren().remove(overlay));
+
+            updateBtn.setOnAction(e -> {
+                updateBtn.setVisible(false);
+                laterBtn.setVisible(false);
+                progressBox.setVisible(true);
+                progressBar.setVisible(true);
+                progressLabel.setVisible(true);
+                progressLabel.setText("正在下载更新...");
+
+                UpdateDownloader.downloadUpdate(
+                    result.downloadUrl,
+                    result.sha256,
+                    result.latestVersion,
+                    new UpdateDownloader.DownloadCallback() {
+                        @Override
+                        public void onProgress(int percentage) {
+                            Platform.runLater(() -> {
+                                progressBar.setProgress(percentage / 100.0);
+                                progressLabel.setText("下载进度: " + percentage + "%");
+                            });
+                        }
+
+                        @Override
+                        public void onComplete(boolean success, String message) {
+                        }
+
+                        @Override
+                        public void onComplete(boolean success, String message, String newJar) {
+                            Platform.runLater(() -> {
+                                if (success) {
+                                    progressLabel.setTextFill(Color.web("#2e7d32"));
+                                    progressLabel.setText(message);
+                                    newJarPath[0] = newJar;
+                                    showNormalUpdateRestartConfirm(overlay, newJarPath[0]);
+                                } else {
+                                    progressLabel.setTextFill(Color.web("#d32f2f"));
+                                    progressLabel.setText(message);
+                                    updateBtn.setVisible(true);
+                                    laterBtn.setVisible(true);
+                                }
+                            });
+                        }
+                    }
+                );
+            });
+
+            btnBox.getChildren().addAll(updateBtn, laterBtn);
+
+            dialog.getChildren().addAll(icon, titleLabel, infoBox, progressBox, btnBox);
+            overlay.getChildren().add(dialog);
+            rootContainer.getChildren().add(overlay);
+
+            fadeIn(overlay, 200);
+
+            dialog.setOpacity(0);
+            dialog.setScaleX(0.9);
+            dialog.setScaleY(0.9);
+
+            javafx.animation.FadeTransition fade = new javafx.animation.FadeTransition(javafx.util.Duration.millis(200), dialog);
+            fade.setFromValue(0);
+            fade.setToValue(1);
+
+            javafx.animation.ScaleTransition scale = new javafx.animation.ScaleTransition(javafx.util.Duration.millis(200), dialog);
+            scale.setFromX(0.9);
+            scale.setFromY(0.9);
+            scale.setToX(1);
+            scale.setToY(1);
+
+            javafx.animation.ParallelTransition pt = new javafx.animation.ParallelTransition(fade, scale);
+            pt.play();
+        });
     }
     
     public Stage getPrimaryStage() { return primaryStage; }
@@ -1268,7 +1572,125 @@ public class Main extends Application {
     public void setCurrentPage(String page) {
         sidebar.setCurrentPage(page);
     }
-    
+
+    private void showNormalUpdateRestartConfirm(StackPane parentOverlay, String newJarPath) {
+        int runningCount = serverManager.getRunningCount();
+
+        StackPane overlay = new StackPane();
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.7);");
+        overlay.setPrefSize(900, 600);
+        overlay.setAlignment(Pos.CENTER);
+
+        VBox dialog = new VBox(15);
+        dialog.setAlignment(Pos.CENTER);
+        dialog.setPadding(new Insets(25, 35, 25, 35));
+        dialog.setMaxWidth(420);
+        dialog.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 12;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 20, 0, 0, 5);"
+        );
+
+        javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+        icon.setContent("M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z");
+        icon.setFill(Color.web("#4CAF50"));
+        icon.setScaleX(1.5);
+        icon.setScaleY(1.5);
+
+        Label titleLabel = new Label("更新下载完成");
+        titleLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 20));
+        titleLabel.setTextFill(Color.web("#333"));
+
+        Label messageLabel;
+        if (runningCount > 0) {
+            messageLabel = new Label("有 " + runningCount + " 个服务器正在运行，是否关闭服务器并重启程序？");
+        } else {
+            messageLabel = new Label("是否立即重启程序以完成更新？");
+        }
+        messageLabel.setFont(Font.font("Microsoft YaHei", 13));
+        messageLabel.setTextFill(Color.web("#666"));
+        messageLabel.setWrapText(true);
+        messageLabel.setAlignment(Pos.CENTER);
+
+        HBox btnBox = new HBox(15);
+        btnBox.setAlignment(Pos.CENTER);
+
+        Button restartBtn = new Button("立即重启");
+        restartBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
+        restartBtn.setTextFill(Color.WHITE);
+        restartBtn.setPrefWidth(120);
+        restartBtn.setPrefHeight(38);
+        restartBtn.setStyle(
+            "-fx-background-color: #4CAF50;" +
+            "-fx-background-radius: 6;" +
+            "-fx-cursor: hand;"
+        );
+        restartBtn.setOnMouseEntered(e -> restartBtn.setStyle(
+            "-fx-background-color: #45a049;" +
+            "-fx-background-radius: 6;" +
+            "-fx-cursor: hand;"
+        ));
+        restartBtn.setOnMouseExited(e -> restartBtn.setStyle(
+            "-fx-background-color: #4CAF50;" +
+            "-fx-background-radius: 6;" +
+            "-fx-cursor: hand;"
+        ));
+        restartBtn.setOnAction(e -> {
+            serverManager.stopAll();
+            UpdateDownloader.launchNewVersion(newJarPath);
+        });
+
+        Button laterBtn = new Button("稍后手动重启");
+        laterBtn.setFont(Font.font("Microsoft YaHei", 14));
+        laterBtn.setTextFill(Color.WHITE);
+        laterBtn.setPrefWidth(140);
+        laterBtn.setPrefHeight(38);
+        laterBtn.setStyle(
+            "-fx-background-color: #757575;" +
+            "-fx-background-radius: 6;" +
+            "-fx-cursor: hand;"
+        );
+        laterBtn.setOnMouseEntered(e -> laterBtn.setStyle(
+            "-fx-background-color: #616161;" +
+            "-fx-background-radius: 6;" +
+            "-fx-cursor: hand;"
+        ));
+        laterBtn.setOnMouseExited(e -> laterBtn.setStyle(
+            "-fx-background-color: #757575;" +
+            "-fx-background-radius: 6;" +
+            "-fx-cursor: hand;"
+        ));
+        laterBtn.setOnAction(e -> {
+            rootContainer.getChildren().remove(parentOverlay);
+            rootContainer.getChildren().remove(overlay);
+        });
+
+        btnBox.getChildren().addAll(restartBtn, laterBtn);
+
+        dialog.getChildren().addAll(icon, titleLabel, messageLabel, btnBox);
+        overlay.getChildren().add(dialog);
+        rootContainer.getChildren().add(overlay);
+
+        fadeIn(overlay, 200);
+
+        dialog.setOpacity(0);
+        dialog.setScaleX(0.9);
+        dialog.setScaleY(0.9);
+
+        javafx.animation.FadeTransition fade = new javafx.animation.FadeTransition(javafx.util.Duration.millis(200), dialog);
+        fade.setFromValue(0);
+        fade.setToValue(1);
+
+        javafx.animation.ScaleTransition scale = new javafx.animation.ScaleTransition(javafx.util.Duration.millis(200), dialog);
+        scale.setFromX(0.9);
+        scale.setFromY(0.9);
+        scale.setToX(1);
+        scale.setToY(1);
+
+        javafx.animation.ParallelTransition pt = new javafx.animation.ParallelTransition(fade, scale);
+        pt.play();
+    }
+
     public static void main(String[] args) {
         UpdateDownloader.DeleteResult result = UpdateDownloader.checkAndDeleteOldVersion();
         if (!result.success && result.hasMarkerFile) {

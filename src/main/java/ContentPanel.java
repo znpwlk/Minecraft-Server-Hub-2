@@ -2096,6 +2096,10 @@ public class ContentPanel extends StackPane {
 
                     @Override
                     public void onComplete(boolean success, String message) {
+                    }
+
+                    @Override
+                    public void onComplete(boolean success, String message, String newJarPath) {
                         Platform.runLater(() -> {
                             if (success) {
                                 resultLabel.setTextFill(Color.rgb(100, 255, 100));

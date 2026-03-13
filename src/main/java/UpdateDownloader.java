@@ -24,6 +24,7 @@ public class UpdateDownloader {
     public interface DownloadCallback {
         void onProgress(int percentage);
         void onComplete(boolean success, String message);
+        void onComplete(boolean success, String message, String newJarPath);
     }
 
     public static void downloadUpdate(String downloadUrl, String expectedSha256, String newVersion, DownloadCallback callback) {
@@ -36,7 +37,7 @@ public class UpdateDownloader {
             try {
                 String currentJarPath = getCurrentJarPath();
                 if (currentJarPath == null) {
-                    callback.onComplete(false, "无法获取当前程序路径");
+                    callback.onComplete(false, "无法获取当前程序路径", null);
                     return;
                 }
 
@@ -44,7 +45,7 @@ public class UpdateDownloader {
                 File parentDir = currentJar.getParentFile();
 
                 if (parentDir == null || !parentDir.exists()) {
-                    callback.onComplete(false, "无法获取程序所在目录");
+                    callback.onComplete(false, "无法获取程序所在目录", null);
                     return;
                 }
 
@@ -53,7 +54,7 @@ public class UpdateDownloader {
 
                 if (newJar.exists()) {
                     if (!newJar.delete()) {
-                        callback.onComplete(false, "无法清理旧下载文件");
+                        callback.onComplete(false, "无法清理旧下载文件", null);
                         return;
                     }
                 }
@@ -68,7 +69,7 @@ public class UpdateDownloader {
 
                 int responseCode = conn.getResponseCode();
                 if (responseCode != 200) {
-                    callback.onComplete(false, "服务器返回错误: " + responseCode);
+                    callback.onComplete(false, "服务器返回错误: " + responseCode, null);
                     return;
                 }
 
@@ -100,7 +101,7 @@ public class UpdateDownloader {
                 callback.onProgress(90);
 
                 if (!newJar.exists() || newJar.length() == 0) {
-                    callback.onComplete(false, "下载文件失败，文件为空");
+                    callback.onComplete(false, "下载文件失败，文件为空", null);
                     return;
                 }
 
@@ -108,7 +109,7 @@ public class UpdateDownloader {
                     String actualSha256 = calculateSha256(newJar);
                     if (!actualSha256.equalsIgnoreCase(expectedSha256)) {
                         newJar.delete();
-                        callback.onComplete(false, "文件校验失败，请重新下载");
+                        callback.onComplete(false, "文件校验失败，请重新下载", null);
                         return;
                     }
                 }
@@ -117,18 +118,16 @@ public class UpdateDownloader {
 
                 if (!saveUpdateMarker(currentJarPath, newJar.getAbsolutePath())) {
                     newJar.delete();
-                    callback.onComplete(false, "无法保存更新标记，更新取消");
+                    callback.onComplete(false, "无法保存更新标记，更新取消", null);
                     return;
                 }
 
                 callback.onProgress(100);
-                callback.onComplete(true, "下载完成，即将启动新版本");
-
-                launchNewVersion(newJar.getAbsolutePath());
+                callback.onComplete(true, "下载完成", newJar.getAbsolutePath());
 
             } catch (Exception e) {
                 e.printStackTrace();
-                callback.onComplete(false, "下载失败: " + e.getMessage());
+                callback.onComplete(false, "下载失败: " + e.getMessage(), null);
             }
             executor.shutdown();
         });
@@ -275,7 +274,7 @@ public class UpdateDownloader {
         return !markerFile.exists();
     }
 
-    private static void launchNewVersion(String newJarPath) {
+    public static void launchNewVersion(String newJarPath) {
         try {
             String javaHome = System.getProperty("java.home");
             String javaBin = javaHome + File.separator + "bin" + File.separator + "java";
