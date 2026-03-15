@@ -268,6 +268,7 @@ public class Sidebar extends VBox {
             case "appearance" -> "M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z";
             case "java" -> "M18.5 3H6c-1.1 0-2 .9-2 2v5.71c0 3.83 2.95 7.18 6.78 7.29 3.96.12 7.22-3.06 7.22-7v-1h.5c1.93 0 3.5-1.57 3.5-3.5S20.43 3 18.5 3zM16 8.99c0 2.2-1.8 3.99-3.99 3.99-2.2 0-4-1.8-4-4V5h8v3.99zm2.5-1.99h-1v-2h1c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z";
             case "gamerules" -> "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z";
+            case "address" -> "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z";
             case "update" -> "M12 16.5l4-4h-3v-6h-2v6H8l4 4zm-6 2h12v2H6v-2z";
             case "save" -> "M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z";
             case "folder" -> "M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z";
@@ -287,10 +288,10 @@ public class Sidebar extends VBox {
         this.contentPanel = panel;
     }
 
-    private Button consoleMenuBtn, configMenuBtn, logMenuBtn, gameRulesMenuBtn, javaMenuBtn;
+    private Button consoleMenuBtn, configMenuBtn, logMenuBtn, gameRulesMenuBtn, javaMenuBtn, addressMenuBtn;
     private Button appearanceMenuBtn, updateMenuBtn;
 
-    public void showSubPageNav(String title, Runnable onBack, String currentPage, Runnable onConsole, Runnable onConfig, Runnable onLogSettings, Runnable onGameRules, Runnable onJava) {
+    public void showSubPageNav(String title, Runnable onBack, String currentPage, Runnable onConsole, Runnable onConfig, Runnable onLogSettings, Runnable onGameRules, Runnable onJava, Runnable onAddress) {
         if (isNavAnimating) return;
 
         if (isSubPageMode && subPageNav != null) {
@@ -321,6 +322,7 @@ public class Sidebar extends VBox {
         logMenuBtn = null;
         gameRulesMenuBtn = null;
         javaMenuBtn = null;
+        addressMenuBtn = null;
 
         if (onConsole != null) {
             consoleMenuBtn = createSubMenuBtn("终端控制台", getIcon("console"), currentPage.equals("console"));
@@ -332,6 +334,12 @@ public class Sidebar extends VBox {
             configMenuBtn = createSubMenuBtn("配置管理", getIcon("config"), currentPage.equals("config"));
             configMenuBtn.setOnAction(e -> onConfig.run());
             subPageNav.getChildren().add(configMenuBtn);
+        }
+
+        if (onAddress != null) {
+            addressMenuBtn = createSubMenuBtn("服务器地址", getIcon("address"), currentPage.equals("address"));
+            addressMenuBtn.setOnAction(e -> onAddress.run());
+            subPageNav.getChildren().add(addressMenuBtn);
         }
 
         if (onJava != null) {
@@ -377,6 +385,9 @@ public class Sidebar extends VBox {
         }
         if (logMenuBtn != null) {
             updateSubMenuBtnStyle(logMenuBtn, currentPage.equals("logsettings"));
+        }
+        if (addressMenuBtn != null) {
+            updateSubMenuBtnStyle(addressMenuBtn, currentPage.equals("address"));
         }
     }
 

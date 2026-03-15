@@ -26,7 +26,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 
 public class Main extends Application {
-    public static final String VERSION = "2.1";
+    public static final String VERSION = "2.2";
     
     private Stage primaryStage;
     private StackPane rootContainer;
@@ -1237,10 +1237,14 @@ public class Main extends Application {
                 result.latestVersion,
                 new UpdateDownloader.DownloadCallback() {
                     @Override
-                    public void onProgress(int percentage) {
+                    public void onProgress(int percentage, String speed) {
                         Platform.runLater(() -> {
                             progressBar.setProgress(percentage / 100.0);
-                            progressLabel.setText("下载进度: " + percentage + "%");
+                            if (speed != null && !speed.isEmpty()) {
+                                progressLabel.setText("下载进度: " + percentage + "% (" + speed + ")");
+                            } else {
+                                progressLabel.setText("下载进度: " + percentage + "%");
+                            }
                         });
                     }
 
@@ -1508,10 +1512,14 @@ public class Main extends Application {
                     result.latestVersion,
                     new UpdateDownloader.DownloadCallback() {
                         @Override
-                        public void onProgress(int percentage) {
+                        public void onProgress(int percentage, String speed) {
                             Platform.runLater(() -> {
                                 progressBar.setProgress(percentage / 100.0);
-                                progressLabel.setText("下载进度: " + percentage + "%");
+                                if (speed != null && !speed.isEmpty()) {
+                                    progressLabel.setText("下载进度: " + percentage + "% (" + speed + ")");
+                                } else {
+                                    progressLabel.setText("下载进度: " + percentage + "%");
+                                }
                             });
                         }
 

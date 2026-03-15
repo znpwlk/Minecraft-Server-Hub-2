@@ -1053,7 +1053,8 @@ public class ContentPanel extends StackPane {
                 () -> showConfig(),
                 () -> showLogSettingsPage(),
                 () -> showGameRulesPage(),
-                () -> showJavaSettingsPage()
+                () -> showJavaSettingsPage(),
+                () -> showServerAddress()
             );
         }
     }
@@ -1341,7 +1342,8 @@ public class ContentPanel extends StackPane {
                 () -> showConfig(),
                 () -> showLogSettingsPage(),
                 () -> showGameRulesPage(),
-                () -> showJavaSettingsPage()
+                () -> showJavaSettingsPage(),
+                () -> showServerAddress()
             );
         }
     }
@@ -1532,7 +1534,8 @@ public class ContentPanel extends StackPane {
                 () -> showConfig(),
                 () -> showLogSettingsPage(),
                 () -> showGameRulesPage(),
-                () -> showJavaSettingsPage()
+                () -> showJavaSettingsPage(),
+                () -> showServerAddress()
             );
         }
     }
@@ -1559,7 +1562,8 @@ public class ContentPanel extends StackPane {
                 () -> showConfig(),
                 () -> showLogSettingsPage(),
                 () -> showGameRulesPage(),
-                () -> showJavaSettingsPage()
+                () -> showJavaSettingsPage(),
+                () -> showServerAddress()
             );
         }
 
@@ -2090,7 +2094,7 @@ public class ContentPanel extends StackPane {
                 checkResult[0].latestVersion,
                 new UpdateDownloader.DownloadCallback() {
                     @Override
-                    public void onProgress(int percentage) {
+                    public void onProgress(int percentage, String speed) {
                         Platform.runLater(() -> progressBar.setProgress(percentage / 100.0));
                     }
 
@@ -2319,10 +2323,11 @@ public class ContentPanel extends StackPane {
                 () -> showConfig(),
                 () -> showLogSettingsPage(),
                 () -> showGameRulesPage(),
-                () -> showJavaSettingsPage()
+                () -> showJavaSettingsPage(),
+                () -> showServerAddress()
             );
         }
-        
+
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r);
             t.setDaemon(true);
@@ -2836,6 +2841,7 @@ public class ContentPanel extends StackPane {
             case "logsettings" -> 8;
             case "appearance" -> 9;
             case "update" -> 10;
+            case "address" -> 11;
             default -> -1;
         };
     }
@@ -2889,7 +2895,7 @@ public class ContentPanel extends StackPane {
     }
     
     private boolean isSubPage(String page) {
-        return page.equals("console") || page.equals("config") || page.equals("logsettings") || page.equals("gamerules") || page.equals("java") || page.equals("appearance") || page.equals("update");
+        return page.equals("console") || page.equals("config") || page.equals("logsettings") || page.equals("gamerules") || page.equals("java") || page.equals("appearance") || page.equals("update") || page.equals("address");
     }
     
     private void switchView(Region newView, String transitionType) {
@@ -2994,6 +3000,681 @@ public class ContentPanel extends StackPane {
                 "-fx-cursor: hand;"
             );
         }
+    }
+
+    private String publicIpAddress = null;
+    private boolean publicIpWarningAccepted = false;
+    private volatile boolean isRefreshingPublicIp = false;
+
+    public void showServerAddress() {
+        currentServer = serverManager.getSelected();
+        if (currentServer == null) {
+            showAlert("请先选择一个服务器");
+            return;
+        }
+
+        VBox addressView = new VBox(15);
+        addressView.setPadding(new Insets(10));
+        addressView.setAlignment(Pos.TOP_CENTER);
+
+        Label title = new Label("服务器地址信息");
+        title.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 22));
+        title.setTextFill(Color.WHITE);
+
+        Label statusLabel = new Label("地址获取完成");
+        statusLabel.setFont(Font.font("Microsoft YaHei", 14));
+        statusLabel.setTextFill(Color.LIGHTGREEN);
+
+        int port = getServerPort();
+
+        ScrollPane scroll = new ScrollPane();
+        scroll.setStyle(
+            "-fx-background: transparent;" +
+            "-fx-background-color: transparent;"
+        );
+        scroll.setFitToWidth(true);
+        scroll.setMaxWidth(680);
+        scroll.setPrefHeight(420);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        VBox contentBox = new VBox(12);
+        contentBox.setPadding(new Insets(10));
+
+        HBox localBox = createAddressBox("本地回环", "127.0.0.1:" + port, "只能在自己这台电脑上连接，适合测试服务器或单机游戏", Color.LIGHTGREEN);
+        HBox lanBox = createAddressBox("内网地址", getLanAddress() + ":" + port, "同一局域网内的设备可以连接，适合家庭或宿舍联机", Color.LIGHTGREEN);
+
+        HBox publicBox = new HBox(12);
+        publicBox.setAlignment(Pos.CENTER_LEFT);
+        publicBox.setPadding(new Insets(12));
+        publicBox.setStyle(
+            "-fx-background-color: rgba(255,200,200,0.08);" +
+            "-fx-border-color: rgba(255,100,100,0.3);" +
+            "-fx-border-radius: 8;" +
+            "-fx-border-width: 1;"
+        );
+
+        VBox publicInfo = new VBox(5);
+        publicInfo.setMaxWidth(420);
+        HBox.setHgrow(publicInfo, Priority.ALWAYS);
+
+        Label publicTitle = new Label("公网地址");
+        publicTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
+        publicTitle.setTextFill(Color.web("#ff6b6b"));
+
+        Label publicValue = new Label(publicIpWarningAccepted && publicIpAddress != null ? publicIpAddress + ":" + port : "点击右侧按钮并同意免责声明后显示");
+        publicValue.setFont(Font.font("Microsoft YaHei", 12));
+        publicValue.setTextFill(publicIpWarningAccepted && publicIpAddress != null ? Color.WHITE : Color.web("#ff9999"));
+        publicValue.setStyle(publicIpWarningAccepted && publicIpAddress != null ? "" : "-fx-font-style: italic;");
+        publicValue.setWrapText(true);
+        publicValue.setMaxWidth(400);
+
+        publicInfo.getChildren().addAll(publicTitle, publicValue);
+
+        Button showPublicBtn = createSmallIconBtn("显示公网地址", "#ff4757", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z");
+        showPublicBtn.setOnAction(e -> {
+            if (!publicIpWarningAccepted && !"获取中...".equals(publicIpAddress)) {
+                publicIpWarningAccepted = true;
+                publicIpAddress = "获取中...";
+                showServerAddress();
+                showPublicIpWarning(() -> {
+                    refreshPublicIp(port);
+                });
+            }
+        });
+
+        Button copyPublicBtn = createSmallIconBtn("复制", "#4CAF50", "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z");
+        copyPublicBtn.setOnAction(e -> {
+            if (publicIpAddress != null) {
+                copyToClipboard(publicIpAddress + ":" + port);
+                showSuccess("公网地址已复制");
+            }
+        });
+        copyPublicBtn.setDisable(!publicIpWarningAccepted || publicIpAddress == null);
+
+        HBox publicBtnBox = new HBox(8);
+        publicBtnBox.setAlignment(Pos.CENTER_RIGHT);
+        publicBtnBox.getChildren().addAll(showPublicBtn, copyPublicBtn);
+
+        publicBox.getChildren().addAll(publicInfo, publicBtnBox);
+
+        VBox descriptionBox = new VBox(10);
+        descriptionBox.setPadding(new Insets(15, 0, 0, 0));
+
+        Label descTitle = new Label("连接说明:");
+        descTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
+        descTitle.setTextFill(Color.WHITE);
+
+        VBox descContent = new VBox(8);
+        descContent.getChildren().addAll(
+            createDescItem("本地回环地址", "只能在自己这台电脑上连接，适合测试服务器或单机游戏"),
+            createDescItem("内网地址", "同一WiFi或局域网内的设备可以连接，适合家庭或宿舍联机"),
+            createDescItem("公网地址", "互联网上的任何设备都可以连接，需要进行端口映射才能使用。注意：即使显示公网地址，连接也不一定成功，取决于你的网络环境")
+        );
+
+        VBox solutionBox = new VBox(10);
+        solutionBox.setPadding(new Insets(15, 0, 0, 0));
+
+        Label solutionTitle = new Label("公网连接失败的解决办法:");
+        solutionTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
+        solutionTitle.setTextFill(Color.WHITE);
+
+        VBox solutionContent = new VBox(8);
+        solutionContent.getChildren().addAll(
+            createDescItem("1. 内网穿透工具", "使用 SakuraFrp、花生壳、Ngrok 等工具，无需公网IP即可让外网访问"),
+            createDescItem("2. 端口映射", "在路由器设置中将服务器端口映射到公网，需要路由器有公网IP"),
+            createDescItem("3. 虚拟局域网", "使用 Radmin VPN、Hamachi、ZeroTier 等工具创建虚拟局域网，好友加入后即可联机"),
+            createDescItem("4. 云服务器", "购买云服务器（阿里云、腾讯云等）部署服务器，稳定但需付费")
+        );
+
+        solutionBox.getChildren().addAll(solutionTitle, solutionContent);
+
+        descriptionBox.getChildren().addAll(descTitle, descContent, solutionBox);
+
+        contentBox.getChildren().addAll(localBox, lanBox, publicBox, descriptionBox);
+        scroll.setContent(contentBox);
+
+        HBox btnBox = new HBox(15);
+        btnBox.setAlignment(Pos.CENTER);
+        btnBox.setPadding(new Insets(10, 0, 0, 0));
+
+        Button refreshBtn = createIconBtn("刷新地址", "#2196F3", "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z");
+        refreshBtn.setPrefWidth(110);
+        refreshBtn.setPrefHeight(42);
+        refreshBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 13));
+        refreshBtn.setOnAction(e -> {
+            if (!isRefreshingPublicIp) {
+                publicIpAddress = null;
+                publicIpWarningAccepted = false;
+                showServerAddress();
+            }
+        });
+
+        btnBox.getChildren().addAll(refreshBtn);
+
+        addressView.getChildren().addAll(title, statusLabel, scroll, btnBox);
+
+        String transitionType = determineTransition("address");
+        switchView(addressView, transitionType);
+        currentPage = "address";
+
+        if (sidebar != null) {
+            sidebar.showSubPageNav(
+                currentServer.getName(),
+                () -> {
+                    publicIpWarningAccepted = false;
+                    publicIpAddress = null;
+                    isRefreshingPublicIp = false;
+                    mainApp.setCurrentPage("list");
+                    showServerList();
+                },
+                "address",
+                () -> {
+                    publicIpWarningAccepted = false;
+                    publicIpAddress = null;
+                    isRefreshingPublicIp = false;
+                    showConsole();
+                },
+                () -> {
+                    publicIpWarningAccepted = false;
+                    publicIpAddress = null;
+                    isRefreshingPublicIp = false;
+                    showConfig();
+                },
+                () -> {
+                    publicIpWarningAccepted = false;
+                    publicIpAddress = null;
+                    isRefreshingPublicIp = false;
+                    showLogSettingsPage();
+                },
+                () -> {
+                    publicIpWarningAccepted = false;
+                    publicIpAddress = null;
+                    isRefreshingPublicIp = false;
+                    showGameRulesPage();
+                },
+                () -> {
+                    publicIpWarningAccepted = false;
+                    publicIpAddress = null;
+                    isRefreshingPublicIp = false;
+                    showJavaSettingsPage();
+                },
+                () -> showServerAddress()
+            );
+        }
+    }
+
+    private HBox createAddressBox(String title, String address, String description, Color titleColor) {
+        HBox box = new HBox(12);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPadding(new Insets(12));
+        box.setStyle(
+            "-fx-background-color: rgba(200,255,200,0.08);" +
+            "-fx-border-color: rgba(100,255,100,0.2);" +
+            "-fx-border-radius: 8;" +
+            "-fx-border-width: 1;"
+        );
+
+        VBox info = new VBox(5);
+        info.setMaxWidth(420);
+        HBox.setHgrow(info, Priority.ALWAYS);
+
+        Label titleLabel = new Label(title);
+        titleLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 14));
+        titleLabel.setTextFill(titleColor);
+
+        Label addressLabel = new Label(address);
+        addressLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
+        addressLabel.setTextFill(Color.WHITE);
+        addressLabel.setWrapText(true);
+        addressLabel.setMaxWidth(400);
+
+        Label descLabel = new Label(description);
+        descLabel.setFont(Font.font("Microsoft YaHei", 11));
+        descLabel.setTextFill(Color.rgb(180, 180, 180));
+        descLabel.setWrapText(true);
+
+        info.getChildren().addAll(titleLabel, addressLabel, descLabel);
+
+        Button copyBtn = createSmallIconBtn("复制", "#4CAF50", "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z");
+        copyBtn.setOnAction(e -> {
+            copyToClipboard(address);
+            showSuccess(title + "已复制");
+        });
+
+        box.getChildren().addAll(info, copyBtn);
+
+        box.setOnMouseEntered(e -> box.setStyle(
+            "-fx-background-color: rgba(200,255,200,0.12);" +
+            "-fx-border-color: rgba(100,255,100,0.3);" +
+            "-fx-border-radius: 8;" +
+            "-fx-border-width: 1;"
+        ));
+        box.setOnMouseExited(e -> box.setStyle(
+            "-fx-background-color: rgba(200,255,200,0.08);" +
+            "-fx-border-color: rgba(100,255,100,0.2);" +
+            "-fx-border-radius: 8;" +
+            "-fx-border-width: 1;"
+        ));
+
+        return box;
+    }
+
+    private VBox createDescItem(String title, String desc) {
+        VBox item = new VBox(3);
+
+        Label titleLabel = new Label(title);
+        titleLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 12));
+        titleLabel.setTextFill(Color.rgb(200, 200, 200));
+
+        Label descLabel = new Label(desc);
+        descLabel.setFont(Font.font("Microsoft YaHei", 11));
+        descLabel.setTextFill(Color.rgb(150, 150, 150));
+        descLabel.setWrapText(true);
+        descLabel.setPadding(new Insets(0, 0, 0, 0));
+
+        item.getChildren().addAll(titleLabel, descLabel);
+        return item;
+    }
+
+    private int getServerPort() {
+        try {
+            if (currentServer == null) return 25565;
+            File configFile = GameRules.getConfigFile(currentServer.getWorkingDir());
+            if (configFile != null && configFile.exists()) {
+                Map<String, String> props = GameRules.loadProperties(configFile);
+                if (props != null) {
+                    String portStr = props.get("server-port");
+                    if (portStr != null && !portStr.trim().isEmpty()) {
+                        try {
+                            int port = Integer.parseInt(portStr.trim());
+                            if (port > 0 && port <= 65535) {
+                                return port;
+                            }
+                        } catch (NumberFormatException e) {
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+        }
+        return 25565;
+    }
+
+    private String getLanAddress() {
+        try {
+            String bestIp = null;
+            int bestPriority = Integer.MAX_VALUE;
+
+            java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+
+                if (iface.isLoopback() || !iface.isUp()) continue;
+
+                String name = iface.getName().toLowerCase();
+                String displayName = iface.getDisplayName().toLowerCase();
+
+                int priority = getInterfacePriority(name, displayName);
+                if (priority == -1) continue;
+
+                java.util.Enumeration<java.net.InetAddress> addresses = iface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    java.net.InetAddress addr = addresses.nextElement();
+                    if (addr instanceof java.net.Inet4Address) {
+                        String ip = addr.getHostAddress();
+                        if (isValidLanAddress(ip) && priority < bestPriority) {
+                            bestIp = ip;
+                            bestPriority = priority;
+                        }
+                    }
+                }
+            }
+
+            return bestIp != null ? bestIp : "127.0.0.1";
+        } catch (Exception e) {
+            return "127.0.0.1";
+        }
+    }
+
+    private int getInterfacePriority(String name, String displayName) {
+        if (name.contains("vmware") || name.contains("virtual") || name.contains("vbox") ||
+            name.contains("hyper-v") || name.contains("docker") || name.contains("tap") ||
+            name.contains("tun") || name.contains("ppp") || name.contains("vpn") ||
+            name.contains("zero") || name.contains("hamachi") || name.contains("radmin")) {
+            return -1;
+        }
+
+        if (name.startsWith("eth") || name.startsWith("en")) return 1;
+        if (name.startsWith("wlan") || name.startsWith("wl")) return 2;
+        if (name.startsWith("wifi")) return 3;
+        if (name.contains("ethernet")) return 1;
+        if (name.contains("wireless")) return 2;
+
+        return 10;
+    }
+
+    private boolean isValidLanAddress(String ip) {
+        if (ip == null || ip.isEmpty()) return false;
+
+        if (ip.startsWith("127.")) return false;
+        if (ip.startsWith("169.254.")) return false;
+        if (ip.startsWith("0.")) return false;
+        if (ip.startsWith("255.")) return false;
+        if (ip.startsWith("224.")) return false;
+        if (ip.startsWith("239.")) return false;
+        if (ip.startsWith("240.")) return false;
+
+        String[] parts = ip.split("\\.");
+        if (parts.length != 4) return false;
+
+        try {
+            int[] nums = new int[4];
+            for (int i = 0; i < 4; i++) {
+                nums[i] = Integer.parseInt(parts[i]);
+                if (nums[i] < 0 || nums[i] > 255) return false;
+            }
+
+            if (nums[0] == 10) return true;
+            if (nums[0] == 172 && nums[1] >= 16 && nums[1] <= 31) return true;
+            if (nums[0] == 192 && nums[1] == 168) return true;
+
+            return false;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private void refreshPublicIp(int port) {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        isRefreshingPublicIp = true;
+        executor.submit(() -> {
+            String[] ipApis = {
+                "https://api.ipify.org",
+                "https://ip.3322.net",
+                "https://4.ipw.cn",
+                "https://api-ipv4.ip.sb/ip",
+                "https://checkip.amazonaws.com",
+                "https://icanhazip.com",
+                "https://ifconfig.me/ip"
+            };
+
+            String ip = null;
+            String lastError = "";
+
+            for (String apiUrl : ipApis) {
+                try {
+                    java.net.URL url = new java.net.URL(apiUrl);
+                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setConnectTimeout(3000);
+                    conn.setReadTimeout(3000);
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+                    int responseCode = conn.getResponseCode();
+                    if (responseCode == 200) {
+                        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                                new java.io.InputStreamReader(conn.getInputStream()))) {
+                            String response = reader.readLine();
+                            if (response != null && !response.trim().isEmpty()) {
+                                response = response.trim();
+                                if (isValidIpAddress(response)) {
+                                    ip = response;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    lastError = e.getMessage();
+                }
+            }
+
+            if (ip != null) {
+                publicIpAddress = ip;
+            } else {
+                publicIpAddress = "获取失败";
+            }
+            isRefreshingPublicIp = false;
+
+            Platform.runLater(() -> {
+                showServerAddress();
+            });
+
+            executor.shutdown();
+        });
+    }
+
+    private boolean isValidIpAddress(String ip) {
+        if (ip == null || ip.isEmpty()) return false;
+
+        if (ip.startsWith("127.")) return false;
+        if (ip.startsWith("10.")) return false;
+        if (ip.startsWith("192.168.")) return false;
+        if (ip.startsWith("169.254.")) return false;
+        if (ip.startsWith("0.")) return false;
+        if (ip.startsWith("255.")) return false;
+
+        String[] parts = ip.split("\\.");
+        if (parts.length != 4) return false;
+
+        try {
+            int first = Integer.parseInt(parts[0]);
+            int second = Integer.parseInt(parts[1]);
+
+            if (first == 172 && second >= 16 && second <= 31) return false;
+
+            if (first < 1 || first > 223) return false;
+
+            for (String part : parts) {
+                int num = Integer.parseInt(part);
+                if (num < 0 || num > 255) return false;
+            }
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private void showPublicIpWarning(Runnable onAccept) {
+        if (rootContainer == null) return;
+
+        Platform.runLater(() -> {
+            StackPane overlay = new StackPane();
+            overlay.setStyle("-fx-background-color: rgba(0,0,0,0.6);");
+            overlay.setPrefSize(720, 568);
+            overlay.setAlignment(Pos.CENTER);
+
+            VBox dialog = new VBox(15);
+            dialog.setAlignment(Pos.TOP_CENTER);
+            dialog.setPadding(new Insets(25));
+            dialog.setMaxWidth(480);
+            dialog.setMaxHeight(Region.USE_PREF_SIZE);
+            dialog.setStyle(
+                "-fx-background-color: linear-gradient(to bottom, #fff5f5, #ffffff);" +
+                "-fx-background-radius: 12;" +
+                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 25, 0, 0, 8);"
+            );
+
+            HBox header = new HBox(10);
+            header.setAlignment(Pos.CENTER_LEFT);
+
+            javafx.scene.shape.Circle warningIcon = new javafx.scene.shape.Circle(12);
+            warningIcon.setFill(Color.web("#ff4757"));
+
+            Label headerTitle = new Label("公网地址安全警告");
+            headerTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 18));
+            headerTitle.setTextFill(Color.web("#c0392b"));
+
+            header.getChildren().addAll(warningIcon, headerTitle);
+
+            Label dangerTitle = new Label("⚠ 极危险警告");
+            dangerTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
+            dangerTitle.setTextFill(Color.web("#e74c3c"));
+
+            VBox riskBox = new VBox(12);
+            riskBox.setPadding(new Insets(15));
+            riskBox.setStyle(
+                "-fx-background-color: rgba(231, 76, 60, 0.08);" +
+                "-fx-background-radius: 8;" +
+                "-fx-border-color: rgba(231, 76, 60, 0.3);" +
+                "-fx-border-radius: 8;" +
+                "-fx-border-width: 1;"
+            );
+
+            Label riskIntro = new Label("在显示公网地址之前，请务必了解以下风险:");
+            riskIntro.setFont(Font.font("Microsoft YaHei", 12));
+            riskIntro.setTextFill(Color.web("#555555"));
+            riskIntro.setWrapText(true);
+
+            VBox securityRisks = createRiskSection("安全风险:", new String[]{
+                "服务器将暴露在互联网上，任何人都可能访问",
+                "可能遭受黑客攻击、恶意入侵或数据窃取",
+                "你的个人电脑面临严重安全威胁",
+                "可能导致个人隐私泄露或电脑被远程控制"
+            });
+
+            VBox networkRisks = createRiskSection("网络风险:", new String[]{
+                "可能遭受DDoS攻击，导致网络瘫痪",
+                "流量激增可能产生高额网络费用",
+                "路由器可能被恶意配置或攻击"
+            });
+
+            riskBox.getChildren().addAll(riskIntro, securityRisks, networkRisks);
+
+            javafx.scene.control.CheckBox agreeBox = new javafx.scene.control.CheckBox("我已阅读并完全理解上述所有风险和警告，自愿承担所有责任");
+            agreeBox.setFont(Font.font("Microsoft YaHei", 12));
+            agreeBox.setTextFill(Color.web("#333333"));
+            agreeBox.setWrapText(true);
+
+            HBox btnBox = new HBox(15);
+            btnBox.setAlignment(Pos.CENTER);
+            btnBox.setPadding(new Insets(10, 0, 0, 0));
+
+            Button cancelBtn = new Button("取消");
+            cancelBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 13));
+            cancelBtn.setTextFill(Color.WHITE);
+            cancelBtn.setPrefWidth(100);
+            cancelBtn.setStyle(
+                "-fx-background-color: #95a5a6;" +
+                "-fx-background-radius: 8;" +
+                "-fx-cursor: hand;" +
+                "-fx-padding: 10 25;"
+            );
+            cancelBtn.setOnMouseEntered(e -> cancelBtn.setStyle(
+                "-fx-background-color: #7f8c8d;" +
+                "-fx-background-radius: 8;" +
+                "-fx-cursor: hand;" +
+                "-fx-padding: 10 25;"
+            ));
+            cancelBtn.setOnMouseExited(e -> cancelBtn.setStyle(
+                "-fx-background-color: #95a5a6;" +
+                "-fx-background-radius: 8;" +
+                "-fx-cursor: hand;" +
+                "-fx-padding: 10 25;"
+            ));
+            cancelBtn.setOnAction(e -> rootContainer.getChildren().remove(overlay));
+
+            Button acceptBtn = new Button("我同意");
+            acceptBtn.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 13));
+            acceptBtn.setTextFill(Color.WHITE);
+            acceptBtn.setPrefWidth(100);
+            acceptBtn.setDisable(true);
+            acceptBtn.setStyle(
+                "-fx-background-color: #e74c3c;" +
+                "-fx-background-radius: 8;" +
+                "-fx-cursor: hand;" +
+                "-fx-padding: 10 25;"
+            );
+            acceptBtn.setOnMouseEntered(e -> {
+                if (!acceptBtn.isDisable()) {
+                    acceptBtn.setStyle(
+                        "-fx-background-color: #c0392b;" +
+                        "-fx-background-radius: 8;" +
+                        "-fx-cursor: hand;" +
+                        "-fx-padding: 10 25;"
+                    );
+                }
+            });
+            acceptBtn.setOnMouseExited(e -> acceptBtn.setStyle(
+                "-fx-background-color: #e74c3c;" +
+                "-fx-background-radius: 8;" +
+                "-fx-cursor: hand;" +
+                "-fx-padding: 10 25;"
+            ));
+            acceptBtn.setOnAction(e -> {
+                rootContainer.getChildren().remove(overlay);
+                if (onAccept != null) {
+                    onAccept.run();
+                }
+            });
+
+            agreeBox.selectedProperty().addListener((obs, old, val) -> {
+                acceptBtn.setDisable(!val);
+            });
+
+            btnBox.getChildren().addAll(acceptBtn, cancelBtn);
+
+            dialog.getChildren().addAll(header, dangerTitle, riskBox, agreeBox, btnBox);
+
+            overlay.getChildren().add(dialog);
+            overlay.setOnMouseClicked(e -> {
+                if (e.getTarget() == overlay) {
+                    rootContainer.getChildren().remove(overlay);
+                }
+            });
+
+            rootContainer.getChildren().add(overlay);
+
+            dialog.setScaleX(0.8);
+            dialog.setScaleY(0.8);
+            dialog.setOpacity(0);
+
+            javafx.animation.ParallelTransition pt = new javafx.animation.ParallelTransition();
+
+            javafx.animation.ScaleTransition st = new javafx.animation.ScaleTransition(javafx.util.Duration.millis(300), dialog);
+            st.setToX(1);
+            st.setToY(1);
+
+            javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(300), dialog);
+            ft.setToValue(1);
+
+            pt.getChildren().addAll(st, ft);
+            pt.play();
+        });
+    }
+
+    private VBox createRiskSection(String title, String[] risks) {
+        VBox section = new VBox(6);
+
+        Label titleLabel = new Label("⚠ " + title);
+        titleLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 13));
+        titleLabel.setTextFill(Color.web("#e67e22"));
+
+        VBox riskList = new VBox(4);
+        riskList.setPadding(new Insets(0, 0, 0, 15));
+
+        for (String risk : risks) {
+            Label riskLabel = new Label("• " + risk);
+            riskLabel.setFont(Font.font("Microsoft YaHei", 11));
+            riskLabel.setTextFill(Color.web("#666666"));
+            riskLabel.setWrapText(true);
+            riskList.getChildren().add(riskLabel);
+        }
+
+        section.getChildren().addAll(titleLabel, riskList);
+        return section;
+    }
+
+    private void copyToClipboard(String text) {
+        javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+        content.putString(text);
+        clipboard.setContent(content);
     }
 
 }

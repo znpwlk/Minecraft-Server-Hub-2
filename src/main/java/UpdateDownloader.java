@@ -22,7 +22,7 @@ public class UpdateDownloader {
     }
 
     public interface DownloadCallback {
-        void onProgress(int percentage);
+        void onProgress(int percentage, String speed);
         void onComplete(boolean success, String message);
         void onComplete(boolean success, String message, String newJarPath);
     }
@@ -59,7 +59,7 @@ public class UpdateDownloader {
                     }
                 }
 
-                callback.onProgress(5);
+                callback.onProgress(5, "");
 
                 URL url = new URI(downloadUrl).toURL();
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -74,7 +74,7 @@ public class UpdateDownloader {
                 }
 
                 int fileSize = conn.getContentLength();
-                callback.onProgress(10);
+                callback.onProgress(10, "");
 
                 try (InputStream in = conn.getInputStream();
                      FileOutputStream out = new FileOutputStream(newJar)) {
@@ -83,6 +83,8 @@ public class UpdateDownloader {
                     int bytesRead;
                     long totalRead = 0;
                     int lastProgress = 10;
+                    long lastTime = System.currentTimeMillis();
+                    long lastRead = 0;
 
                     while ((bytesRead = in.read(buffer)) != -1) {
                         out.write(buffer, 0, bytesRead);
@@ -92,13 +94,25 @@ public class UpdateDownloader {
                             int progress = 10 + (int) ((totalRead * 80) / fileSize);
                             if (progress > lastProgress) {
                                 lastProgress = progress;
-                                callback.onProgress(progress);
+
+                                long currentTime = System.currentTimeMillis();
+                                long timeDiff = currentTime - lastTime;
+                                if (timeDiff >= 500) {
+                                    long bytesDiff = totalRead - lastRead;
+                                    double speedBps = (bytesDiff * 1000.0) / timeDiff;
+                                    String speedStr = formatSpeed(speedBps);
+                                    callback.onProgress(progress, speedStr);
+                                    lastTime = currentTime;
+                                    lastRead = totalRead;
+                                } else {
+                                    callback.onProgress(progress, "");
+                                }
                             }
                         }
                     }
                 }
 
-                callback.onProgress(90);
+                callback.onProgress(90, "");
 
                 if (!newJar.exists() || newJar.length() == 0) {
                     callback.onComplete(false, "下载文件失败，文件为空", null);
@@ -114,7 +128,7 @@ public class UpdateDownloader {
                     }
                 }
 
-                callback.onProgress(95);
+                callback.onProgress(95, "");
 
                 if (!saveUpdateMarker(currentJarPath, newJar.getAbsolutePath())) {
                     newJar.delete();
@@ -122,7 +136,7 @@ public class UpdateDownloader {
                     return;
                 }
 
-                callback.onProgress(100);
+                callback.onProgress(100, "");
                 callback.onComplete(true, "下载完成", newJar.getAbsolutePath());
 
             } catch (Exception e) {
@@ -323,6 +337,16 @@ public class UpdateDownloader {
                 .getCodeSource().getLocation().toURI()).getAbsolutePath();
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    private static String formatSpeed(double bytesPerSecond) {
+        if (bytesPerSecond < 1024) {
+            return String.format("%.1f B/s", bytesPerSecond);
+        } else if (bytesPerSecond < 1024 * 1024) {
+            return String.format("%.1f KB/s", bytesPerSecond / 1024);
+        } else {
+            return String.format("%.1f MB/s", bytesPerSecond / (1024 * 1024));
         }
     }
 }
