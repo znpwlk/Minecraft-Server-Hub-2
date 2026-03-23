@@ -33,6 +33,7 @@ public class ContentPanel extends StackPane {
     private ServerCore currentServer;
     private String currentPage = "";
     private boolean isAnimating = false;
+    private java.util.concurrent.ExecutorService verifyExecutor = null;
     private Animation currentAnimation = null;
     private long lastSwitchTime = 0;
     private static final long MIN_SWITCH_INTERVAL = 50;
@@ -41,20 +42,22 @@ public class ContentPanel extends StackPane {
     public ContentPanel(Main mainApp, ServerManager manager) {
         this.mainApp = mainApp;
         this.serverManager = manager;
-        
+
         setPrefWidth(720);
         setMaxWidth(720);
         setPrefHeight(568);
         setMaxHeight(568);
         setPadding(new Insets(20));
-        
+
         setStyle(
             "-fx-background-color: transparent;"
         );
-        
+
         javafx.scene.shape.Rectangle clip = new javafx.scene.shape.Rectangle(720, 568);
         setClip(clip);
-        
+
+        loadDialogAnimation();
+
         showHome();
     }
     
@@ -1396,7 +1399,11 @@ public class ContentPanel extends StackPane {
         customRadio.setFont(Font.font("Microsoft YaHei", 12));
 
         TextField javaPathField = new TextField();
-        javaPathField.setPromptText("例如: C:\\Program Files\\Java\\jdk-21\\bin\\java.exe");
+        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+            javaPathField.setPromptText("例如: C:\\Program Files\\Java\\jdk-21\\bin\\java.exe");
+        } else {
+            javaPathField.setPromptText("例如: /usr/lib/jvm/java-21-openjdk/bin/java");
+        }
         javaPathField.setPrefWidth(400);
         javaPathField.setStyle(
             "-fx-background-color: rgba(255,255,255,0.1);" +
@@ -1420,14 +1427,61 @@ public class ContentPanel extends StackPane {
             }
         });
 
+        Button verifyBtn = createIconBtn("验证", "#FF9800", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z");
+        final java.util.concurrent.atomic.AtomicBoolean isVerifying = new java.util.concurrent.atomic.AtomicBoolean(false);
+        verifyBtn.setOnAction(e -> {
+            String javaPath = javaPathField.getText().trim();
+            if (javaPath.isEmpty()) {
+                showAlert("请输入 Java 路径");
+                return;
+            }
+            if (!isVerifying.compareAndSet(false, true)) {
+                return;
+            }
+            if (verifyExecutor == null || verifyExecutor.isShutdown()) {
+                isVerifying.set(false);
+                showAlert("验证服务不可用，请刷新页面重试");
+                return;
+            }
+            verifyBtn.setDisable(true);
+            verifyBtn.setText("验证中...");
+            verifyExecutor.submit(() -> {
+                try {
+                    boolean isValid = verifyJavaPath(javaPath);
+                    Platform.runLater(() -> {
+                        isVerifying.set(false);
+                        if (verifyBtn != null) {
+                            verifyBtn.setDisable(false);
+                            verifyBtn.setText("验证");
+                        }
+                        if (isValid) {
+                            showSuccess("Java 路径有效");
+                        } else {
+                            showAlert("无效的 Java 路径，请检查文件是否存在且为可执行的 Java 程序");
+                        }
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        isVerifying.set(false);
+                        if (verifyBtn != null) {
+                            verifyBtn.setDisable(false);
+                            verifyBtn.setText("验证");
+                        }
+                        showAlert("验证过程发生错误");
+                    });
+                }
+            });
+        });
+
         HBox customBox = new HBox(10);
         customBox.setAlignment(Pos.CENTER_LEFT);
-        customBox.getChildren().addAll(javaPathField, browseBtn);
+        customBox.getChildren().addAll(javaPathField, browseBtn, verifyBtn);
 
         javaGroup.selectedToggleProperty().addListener((obs, oldVal, newVal) -> {
             boolean isCustom = newVal == customRadio;
             javaPathField.setDisable(!isCustom);
             browseBtn.setDisable(!isCustom);
+            verifyBtn.setDisable(!isCustom);
         });
 
         Button saveBtn = createIconBtn("保存设置", "#4CAF50", "M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z");
@@ -1504,11 +1558,18 @@ public class ContentPanel extends StackPane {
 
                 javaPathField.setDisable(!customRadio.isSelected());
                 browseBtn.setDisable(!customRadio.isSelected());
+                verifyBtn.setDisable(!customRadio.isSelected());
             });
             executor.shutdown();
         });
 
         ScrollPane scroll = new ScrollPane(contentBox);
+
+        javaView.setOnScroll(e -> {
+            if (e.getDeltaY() != 0) {
+                scroll.setVvalue(scroll.getVvalue() - e.getDeltaY() / scroll.getHeight());
+            }
+        });
         scroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
         scroll.setFitToWidth(true);
         scroll.setMaxWidth(680);
@@ -1521,6 +1582,15 @@ public class ContentPanel extends StackPane {
         String transitionType = determineTransition("java");
         switchView(javaView, transitionType);
         currentPage = "java";
+
+        if (verifyExecutor != null && !verifyExecutor.isShutdown()) {
+            verifyExecutor.shutdownNow();
+        }
+        verifyExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
 
         if (sidebar != null) {
             sidebar.showSubPageNav(
@@ -1664,11 +1734,7 @@ public class ContentPanel extends StackPane {
 
         Button openDirBtn = createIconBtn("打开日志目录", "#2196F3", "M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z");
         openDirBtn.setOnAction(e -> {
-            try {
-                java.awt.Desktop.getDesktop().open(new File("msh/logs"));
-            } catch (Exception ex) {
-                showError("无法打开目录: " + ex.getMessage());
-            }
+            openDirectory(new File("msh/logs"));
         });
 
         HBox btnBox = new HBox(15);
@@ -1776,7 +1842,7 @@ public class ContentPanel extends StackPane {
         FlowPane animButtons = new FlowPane();
         animButtons.setHgap(10);
         animButtons.setVgap(10);
-        animButtons.setPrefWrapLength(600);
+        animButtons.setPrefWrapLength(480);
 
         String currentMode = mainApp.getAnimationMode();
         String[][] animOptions = {
@@ -1905,8 +1971,86 @@ public class ContentPanel extends StackPane {
         notifControls.getChildren().addAll(notifSlider, notifValueLabel);
         notifSection.getChildren().addAll(notifTitle, notifDesc, notifControls);
 
-        settingsBox.getChildren().addAll(bgSection, animSection, notifSection);
-        settingsView.getChildren().addAll(title, settingsBox);
+        VBox dialogAnimSection = new VBox(12);
+        dialogAnimSection.setAlignment(Pos.CENTER_LEFT);
+
+        Label dialogAnimTitle = new Label("弹窗动画");
+        dialogAnimTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
+        dialogAnimTitle.setTextFill(Color.WHITE);
+
+        Label dialogAnimDesc = new Label("选择弹窗的进入动画效果");
+        dialogAnimDesc.setFont(Font.font("Microsoft YaHei", 12));
+        dialogAnimDesc.setTextFill(Color.rgb(180, 180, 180));
+
+        FlowPane dialogAnimButtons = new FlowPane();
+        dialogAnimButtons.setHgap(10);
+        dialogAnimButtons.setVgap(10);
+        dialogAnimButtons.setPrefWrapLength(480);
+
+        DialogAnimation currentDialogAnim = getDialogAnimation();
+        String[][] dialogAnimOptions = {
+            {"缩放", "SCALE"},
+            {"放大", "ZOOM"},
+            {"淡入", "FADE"},
+            {"上滑", "SLIDE_UP"},
+            {"下滑", "SLIDE_DOWN"},
+            {"左滑", "SLIDE_LEFT"},
+            {"右滑", "SLIDE_RIGHT"},
+            {"弹跳", "BOUNCE"},
+            {"翻转", "FLIP"},
+            {"旋转", "ROTATE"},
+            {"弹性", "ELASTIC"},
+            {"果冻", "JELLO"},
+            {"脉冲", "PULSE"},
+            {"摇晃", "SHAKE"},
+            {"摆动", "SWING"},
+            {"摇摆", "WOBBLE"},
+            {"心跳", "HEART_BEAT"},
+            {"橡皮筋", "RUBBER_BAND"},
+            {"惊喜", "TADA"},
+            {"闪烁", "BLINK"},
+            {"发光", "GLOW"},
+            {"随机", "RANDOM"},
+            {"无", "NONE"}
+        };
+        Button[] dialogAnimBtns = new Button[dialogAnimOptions.length];
+
+        for (int i = 0; i < dialogAnimOptions.length; i++) {
+            String name = dialogAnimOptions[i][0];
+            String mode = dialogAnimOptions[i][1];
+            Button btn = new Button(name);
+            btn.setPrefWidth(70);
+            btn.setPrefHeight(32);
+            btn.setFont(Font.font("Microsoft YaHei", 11));
+
+            boolean isSelected = mode.equals(currentDialogAnim.name());
+            updateAnimButtonStyle(btn, isSelected);
+
+            final int idx = i;
+            btn.setOnAction(e -> {
+                setDialogAnimation(DialogAnimation.valueOf(mode));
+                for (int j = 0; j < dialogAnimBtns.length; j++) {
+                    updateAnimButtonStyle(dialogAnimBtns[j], j == idx);
+                }
+                showSuccess("已切换到 " + name);
+            });
+
+            dialogAnimBtns[i] = btn;
+            dialogAnimButtons.getChildren().add(btn);
+        }
+
+        dialogAnimSection.getChildren().addAll(dialogAnimTitle, dialogAnimDesc, dialogAnimButtons);
+
+        settingsBox.getChildren().addAll(bgSection, animSection, notifSection, dialogAnimSection);
+
+        ScrollPane scrollPane = new ScrollPane(settingsBox);
+        scrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        scrollPane.setFitToWidth(true);
+        scrollPane.setPrefHeight(480);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        settingsView.getChildren().addAll(title, scrollPane);
 
         String transitionType = determineTransition("appearance");
         switchView(settingsView, transitionType);
@@ -2189,17 +2333,25 @@ public class ContentPanel extends StackPane {
     private List<String> detectSystemJava() {
         List<String> javaList = new ArrayList<>();
 
+        Process process = null;
         try {
             ProcessBuilder pb = new ProcessBuilder("java", "-version");
             pb.redirectErrorStream(true);
-            Process process = pb.start();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line = reader.readLine();
-                if (line != null) {
-                    javaList.add("系统默认 - java");
+            process = pb.start();
+            boolean finished = process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            if (finished) {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line = reader.readLine();
+                    if (line != null && (line.contains("java") || line.contains("openjdk"))) {
+                        javaList.add("系统默认 - java");
+                    }
                 }
             }
         } catch (Exception e) {
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
         }
 
         String[] commonPaths;
@@ -2241,6 +2393,66 @@ public class ContentPanel extends StackPane {
         }
         
         return javaList;
+    }
+
+    private boolean verifyJavaPath(String javaPath) {
+        File javaFile = new File(javaPath);
+        if (!javaFile.exists()) {
+            return false;
+        }
+        final Process[] processHolder = new Process[1];
+        java.util.concurrent.ExecutorService readExecutor = null;
+        try {
+            ProcessBuilder pb = new ProcessBuilder(javaPath, "-version");
+            pb.redirectErrorStream(true);
+            processHolder[0] = pb.start();
+
+            readExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+            final java.util.concurrent.ExecutorService executorRef = readExecutor;
+            java.util.concurrent.Future<String> future = readExecutor.submit(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()))) {
+                    StringBuilder output = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+                    return output.toString();
+                } catch (java.io.IOException e) {
+                    if (processHolder[0] != null && processHolder[0].isAlive()) {
+                        processHolder[0].destroyForcibly();
+                    }
+                    executorRef.shutdownNow();
+                    return null;
+                }
+            });
+
+            String result;
+            try {
+                result = future.get(3, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                future.cancel(true);
+                return false;
+            } catch (java.util.concurrent.CancellationException e) {
+                return false;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+
+            if (result == null) {
+                return false;
+            }
+            return result.contains("java") || result.contains("openjdk");
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (readExecutor != null) {
+                readExecutor.shutdownNow();
+            }
+            if (processHolder[0] != null && processHolder[0].isAlive()) {
+                processHolder[0].destroyForcibly();
+            }
+        }
     }
 
     private GameRulesManager gameRulesManager;
@@ -2683,6 +2895,34 @@ public class ContentPanel extends StackPane {
             mainApp.showNotification(msg, "error");
         }
     }
+
+    private boolean isLinux() {
+        return System.getProperty("os.name").toLowerCase().contains("linux");
+    }
+
+    private void openDirectory(File dir) {
+        try {
+            if (isLinux()) {
+                Runtime.getRuntime().exec(new String[]{"xdg-open", dir.getAbsolutePath()});
+            } else {
+                java.awt.Desktop.getDesktop().open(dir);
+            }
+        } catch (Exception ex) {
+            showError("无法打开目录: " + ex.getMessage());
+        }
+    }
+
+    private void openUrl(String url) {
+        try {
+            if (isLinux()) {
+                Runtime.getRuntime().exec(new String[]{"xdg-open", url});
+            } else {
+                java.awt.Desktop.getDesktop().browse(new java.net.URI(url));
+            }
+        } catch (Exception ex) {
+            showError("无法打开链接: " + ex.getMessage());
+        }
+    }
     
     private void showConfirmDialog(String title, String message, Runnable onConfirm, String linkText, String linkUrl) {
         showConfirmDialog(title, message, onConfirm, linkText, linkUrl, "#4CAF50", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z");
@@ -2707,7 +2947,7 @@ public class ContentPanel extends StackPane {
             dialog.setMaxHeight(Region.USE_PREF_SIZE);
             dialog.setStyle(
                 "-fx-background-color: white;" +
-                "-fx-background-radius: 12;" +
+                "-fx-background-radius: 6;" +
                 "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 20, 0, 0, 5);"
             );
 
@@ -2795,11 +3035,7 @@ public class ContentPanel extends StackPane {
                 link.setFont(Font.font("Microsoft YaHei", 13));
                 link.setTextFill(Color.web("#2196F3"));
                 link.setOnAction(e -> {
-                    try {
-                        java.awt.Desktop.getDesktop().browse(new java.net.URI(linkUrl));
-                    } catch (Exception ex) {
-                        System.out.println("无法打开链接: " + ex.getMessage());
-                    }
+                    openUrl(linkUrl);
                 });
                 dialog.getChildren().addAll(icon, titleLabel, msgLabel, link, btnBox);
             } else {
@@ -2814,8 +3050,454 @@ public class ContentPanel extends StackPane {
             });
             
             rootContainer.getChildren().add(overlay);
-            fadeIn(dialog, 200);
+            animateDialog(dialog, dialogAnimation);
         });
+    }
+
+    public enum DialogAnimation {
+        FADE, SCALE, SLIDE_UP, SLIDE_DOWN, SLIDE_LEFT, SLIDE_RIGHT, ZOOM,
+        BOUNCE, FLIP, ROTATE, ELASTIC, JELLO, PULSE, SHAKE, SWING, WOBBLE,
+        HEART_BEAT, RUBBER_BAND, TADA, BLINK, GLOW, NONE, RANDOM
+    }
+
+    private DialogAnimation dialogAnimation = DialogAnimation.SCALE;
+
+    public void setDialogAnimation(DialogAnimation animation) {
+        this.dialogAnimation = animation;
+        saveDialogAnimation();
+    }
+
+    public DialogAnimation getDialogAnimation() {
+        return dialogAnimation;
+    }
+
+    private void saveDialogAnimation() {
+        try {
+            File configFile = new File("msh/config.json");
+            String content = "{}";
+            if (configFile.exists()) {
+                content = new String(java.nio.file.Files.readAllBytes(configFile.toPath()));
+            } else {
+                configFile.getParentFile().mkdirs();
+            }
+
+            String animName = dialogAnimation.name();
+            if (content.contains("\"dialogAnimation\"")) {
+                int start = content.indexOf("\"dialogAnimation\"") + 19;
+                int end = content.indexOf("\"", start);
+                if (end > start) {
+                    content = content.substring(0, start) + animName + content.substring(end);
+                } else {
+                    content = content.replace("}", ",\"dialogAnimation\":\"" + animName + "\"}");
+                }
+            } else {
+                content = content.replace("}", ",\"dialogAnimation\":\"" + animName + "\"}");
+            }
+
+            java.nio.file.Files.write(configFile.toPath(), content.getBytes());
+        } catch (Exception e) {
+            System.out.println("保存弹窗动画配置失败: " + e.getMessage());
+        }
+    }
+
+    private void loadDialogAnimation() {
+        try {
+            File configFile = new File("msh/config.json");
+            if (configFile.exists()) {
+                String content = new String(java.nio.file.Files.readAllBytes(configFile.toPath()));
+                if (content.contains("\"dialogAnimation\"")) {
+                    int start = content.indexOf("\"dialogAnimation\"") + 19;
+                    int end = content.indexOf("\"", start);
+                    if (end > start) {
+                        String animName = content.substring(start, end);
+                        dialogAnimation = DialogAnimation.valueOf(animName);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("加载弹窗动画配置失败: " + e.getMessage());
+        }
+    }
+
+    private void animateDialog(VBox dialog, DialogAnimation animation) {
+        Duration duration = Duration.millis(250);
+
+        dialog.setScaleX(1);
+        dialog.setScaleY(1);
+        dialog.setTranslateX(0);
+        dialog.setTranslateY(0);
+        dialog.setRotate(0);
+
+        switch (animation) {
+            case FADE -> {
+                dialog.setOpacity(0);
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                ft.play();
+            }
+            case SCALE -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.8);
+                dialog.setScaleY(0.8);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                ScaleTransition st = new ScaleTransition(duration, dialog);
+                st.setFromX(0.8);
+                st.setFromY(0.8);
+                st.setToX(1);
+                st.setToY(1);
+                pt.getChildren().addAll(ft, st);
+                pt.play();
+            }
+            case ZOOM -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.5);
+                dialog.setScaleY(0.5);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                ScaleTransition st = new ScaleTransition(duration, dialog);
+                st.setFromX(0.5);
+                st.setFromY(0.5);
+                st.setToX(1);
+                st.setToY(1);
+                pt.getChildren().addAll(ft, st);
+                pt.play();
+            }
+            case SLIDE_UP -> {
+                dialog.setOpacity(0);
+                dialog.setTranslateY(50);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                TranslateTransition tt = new TranslateTransition(duration, dialog);
+                tt.setFromY(50);
+                tt.setToY(0);
+                pt.getChildren().addAll(ft, tt);
+                pt.play();
+            }
+            case SLIDE_DOWN -> {
+                dialog.setOpacity(0);
+                dialog.setTranslateY(-50);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                TranslateTransition tt = new TranslateTransition(duration, dialog);
+                tt.setFromY(-50);
+                tt.setToY(0);
+                pt.getChildren().addAll(ft, tt);
+                pt.play();
+            }
+            case SLIDE_LEFT -> {
+                dialog.setOpacity(0);
+                dialog.setTranslateX(50);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                TranslateTransition tt = new TranslateTransition(duration, dialog);
+                tt.setFromX(50);
+                tt.setToX(0);
+                pt.getChildren().addAll(ft, tt);
+                pt.play();
+            }
+            case SLIDE_RIGHT -> {
+                dialog.setOpacity(0);
+                dialog.setTranslateX(-50);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                TranslateTransition tt = new TranslateTransition(duration, dialog);
+                tt.setFromX(-50);
+                tt.setToX(0);
+                pt.getChildren().addAll(ft, tt);
+                pt.play();
+            }
+            case BOUNCE -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.3);
+                dialog.setScaleY(0.3);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0.3),
+                    new KeyValue(dialog.scaleYProperty(), 0.3));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(150),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 1.1),
+                    new KeyValue(dialog.scaleYProperty(), 1.1));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(250),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3);
+                timeline.play();
+            }
+            case FLIP -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                ScaleTransition st = new ScaleTransition(duration, dialog);
+                st.setFromX(0);
+                st.setFromY(1);
+                st.setToX(1);
+                st.setToY(1);
+                pt.getChildren().addAll(ft, st);
+                pt.play();
+            }
+            case ROTATE -> {
+                dialog.setOpacity(0);
+                dialog.setRotate(-180);
+                ParallelTransition pt = new ParallelTransition();
+                FadeTransition ft = new FadeTransition(duration, dialog);
+                ft.setFromValue(0);
+                ft.setToValue(1);
+                RotateTransition rt = new RotateTransition(duration, dialog);
+                rt.setFromAngle(-180);
+                rt.setToAngle(0);
+                pt.getChildren().addAll(ft, rt);
+                pt.play();
+            }
+            case ELASTIC -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0);
+                dialog.setScaleY(0);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0),
+                    new KeyValue(dialog.scaleYProperty(), 0));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 1.2),
+                    new KeyValue(dialog.scaleYProperty(), 1.2));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(200),
+                    new KeyValue(dialog.scaleXProperty(), 0.9),
+                    new KeyValue(dialog.scaleYProperty(), 0.9));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(300),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4);
+                timeline.play();
+            }
+            case JELLO -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.8);
+                dialog.setScaleY(0.8);
+                dialog.setRotate(-5);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0.8),
+                    new KeyValue(dialog.scaleYProperty(), 0.8),
+                    new KeyValue(dialog.rotateProperty(), -5));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 1.05),
+                    new KeyValue(dialog.scaleYProperty(), 0.95),
+                    new KeyValue(dialog.rotateProperty(), 5));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(200),
+                    new KeyValue(dialog.scaleXProperty(), 0.95),
+                    new KeyValue(dialog.scaleYProperty(), 1.05),
+                    new KeyValue(dialog.rotateProperty(), -3));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(300),
+                    new KeyValue(dialog.scaleXProperty(), 1.02),
+                    new KeyValue(dialog.scaleYProperty(), 0.98),
+                    new KeyValue(dialog.rotateProperty(), 2));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(400),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1),
+                    new KeyValue(dialog.rotateProperty(), 0));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5);
+                timeline.play();
+            }
+            case PULSE -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.8);
+                dialog.setScaleY(0.8);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0.8),
+                    new KeyValue(dialog.scaleYProperty(), 0.8));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(125),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 1.05),
+                    new KeyValue(dialog.scaleYProperty(), 1.05));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(250),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3);
+                timeline.play();
+            }
+            case SHAKE -> {
+                dialog.setOpacity(0);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO, new KeyValue(dialog.opacityProperty(), 0));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100), new KeyValue(dialog.opacityProperty(), 1));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(130), new KeyValue(dialog.translateXProperty(), -10));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(160), new KeyValue(dialog.translateXProperty(), 10));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(190), new KeyValue(dialog.translateXProperty(), -10));
+                KeyFrame kf6 = new KeyFrame(Duration.millis(220), new KeyValue(dialog.translateXProperty(), 10));
+                KeyFrame kf7 = new KeyFrame(Duration.millis(250), new KeyValue(dialog.translateXProperty(), -5));
+                KeyFrame kf8 = new KeyFrame(Duration.millis(280), new KeyValue(dialog.translateXProperty(), 5));
+                KeyFrame kf9 = new KeyFrame(Duration.millis(310), new KeyValue(dialog.translateXProperty(), 0));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5, kf6, kf7, kf8, kf9);
+                timeline.play();
+            }
+            case SWING -> {
+                dialog.setOpacity(0);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO, new KeyValue(dialog.opacityProperty(), 0));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100), new KeyValue(dialog.opacityProperty(), 1));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(150), new KeyValue(dialog.rotateProperty(), 15));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(200), new KeyValue(dialog.rotateProperty(), -10));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(250), new KeyValue(dialog.rotateProperty(), 5));
+                KeyFrame kf6 = new KeyFrame(Duration.millis(300), new KeyValue(dialog.rotateProperty(), -5));
+                KeyFrame kf7 = new KeyFrame(Duration.millis(350), new KeyValue(dialog.rotateProperty(), 0));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5, kf6, kf7);
+                timeline.play();
+            }
+            case WOBBLE -> {
+                dialog.setOpacity(0);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO, new KeyValue(dialog.opacityProperty(), 0));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100), new KeyValue(dialog.opacityProperty(), 1));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(150), new KeyValue(dialog.translateXProperty(), -25), new KeyValue(dialog.rotateProperty(), -5));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(200), new KeyValue(dialog.translateXProperty(), 20), new KeyValue(dialog.rotateProperty(), 3));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(250), new KeyValue(dialog.translateXProperty(), -15), new KeyValue(dialog.rotateProperty(), -3));
+                KeyFrame kf6 = new KeyFrame(Duration.millis(300), new KeyValue(dialog.translateXProperty(), 10), new KeyValue(dialog.rotateProperty(), 2));
+                KeyFrame kf7 = new KeyFrame(Duration.millis(350), new KeyValue(dialog.translateXProperty(), -5), new KeyValue(dialog.rotateProperty(), -1));
+                KeyFrame kf8 = new KeyFrame(Duration.millis(400), new KeyValue(dialog.translateXProperty(), 0), new KeyValue(dialog.rotateProperty(), 0));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5, kf6, kf7, kf8);
+                timeline.play();
+            }
+            case HEART_BEAT -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.8);
+                dialog.setScaleY(0.8);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0.8),
+                    new KeyValue(dialog.scaleYProperty(), 0.8));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 1.15),
+                    new KeyValue(dialog.scaleYProperty(), 1.15));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(200),
+                    new KeyValue(dialog.scaleXProperty(), 0.9),
+                    new KeyValue(dialog.scaleYProperty(), 0.9));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(300),
+                    new KeyValue(dialog.scaleXProperty(), 1.05),
+                    new KeyValue(dialog.scaleYProperty(), 1.05));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(400),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5);
+                timeline.play();
+            }
+            case RUBBER_BAND -> {
+                dialog.setOpacity(0);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO, new KeyValue(dialog.opacityProperty(), 0));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(100), new KeyValue(dialog.opacityProperty(), 1));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(150), new KeyValue(dialog.scaleXProperty(), 1.25), new KeyValue(dialog.scaleYProperty(), 0.75));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(200), new KeyValue(dialog.scaleXProperty(), 0.75), new KeyValue(dialog.scaleYProperty(), 1.25));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(250), new KeyValue(dialog.scaleXProperty(), 1.15), new KeyValue(dialog.scaleYProperty(), 0.85));
+                KeyFrame kf6 = new KeyFrame(Duration.millis(300), new KeyValue(dialog.scaleXProperty(), 0.95), new KeyValue(dialog.scaleYProperty(), 1.05));
+                KeyFrame kf7 = new KeyFrame(Duration.millis(350), new KeyValue(dialog.scaleXProperty(), 1.02), new KeyValue(dialog.scaleYProperty(), 0.98));
+                KeyFrame kf8 = new KeyFrame(Duration.millis(400), new KeyValue(dialog.scaleXProperty(), 1), new KeyValue(dialog.scaleYProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5, kf6, kf7, kf8);
+                timeline.play();
+            }
+            case TADA -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.5);
+                dialog.setScaleY(0.5);
+                dialog.setRotate(-15);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0.5),
+                    new KeyValue(dialog.scaleYProperty(), 0.5),
+                    new KeyValue(dialog.rotateProperty(), -15));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(150),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 0.9),
+                    new KeyValue(dialog.scaleYProperty(), 0.9),
+                    new KeyValue(dialog.rotateProperty(), -5));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(250),
+                    new KeyValue(dialog.scaleXProperty(), 1.1),
+                    new KeyValue(dialog.scaleYProperty(), 1.1),
+                    new KeyValue(dialog.rotateProperty(), 3));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(350),
+                    new KeyValue(dialog.scaleXProperty(), 0.95),
+                    new KeyValue(dialog.scaleYProperty(), 0.95),
+                    new KeyValue(dialog.rotateProperty(), -2));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(450),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1),
+                    new KeyValue(dialog.rotateProperty(), 0));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5);
+                timeline.play();
+            }
+            case BLINK -> {
+                dialog.setOpacity(0);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO, new KeyValue(dialog.opacityProperty(), 0));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(80), new KeyValue(dialog.opacityProperty(), 1));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(160), new KeyValue(dialog.opacityProperty(), 0.3));
+                KeyFrame kf4 = new KeyFrame(Duration.millis(240), new KeyValue(dialog.opacityProperty(), 1));
+                KeyFrame kf5 = new KeyFrame(Duration.millis(320), new KeyValue(dialog.opacityProperty(), 0.5));
+                KeyFrame kf6 = new KeyFrame(Duration.millis(400), new KeyValue(dialog.opacityProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3, kf4, kf5, kf6);
+                timeline.play();
+            }
+            case GLOW -> {
+                dialog.setOpacity(0);
+                dialog.setScaleX(0.9);
+                dialog.setScaleY(0.9);
+                Timeline timeline = new Timeline();
+                KeyFrame kf1 = new KeyFrame(Duration.ZERO,
+                    new KeyValue(dialog.opacityProperty(), 0),
+                    new KeyValue(dialog.scaleXProperty(), 0.9),
+                    new KeyValue(dialog.scaleYProperty(), 0.9));
+                KeyFrame kf2 = new KeyFrame(Duration.millis(150),
+                    new KeyValue(dialog.opacityProperty(), 0.8),
+                    new KeyValue(dialog.scaleXProperty(), 1.02),
+                    new KeyValue(dialog.scaleYProperty(), 1.02));
+                KeyFrame kf3 = new KeyFrame(Duration.millis(300),
+                    new KeyValue(dialog.opacityProperty(), 1),
+                    new KeyValue(dialog.scaleXProperty(), 1),
+                    new KeyValue(dialog.scaleYProperty(), 1));
+                timeline.getKeyFrames().addAll(kf1, kf2, kf3);
+                timeline.play();
+            }
+            case NONE -> {
+                dialog.setOpacity(1);
+            }
+            case RANDOM -> {
+                DialogAnimation[] allAnims = DialogAnimation.values();
+                java.util.List<DialogAnimation> validAnims = new java.util.ArrayList<>();
+                for (DialogAnimation anim : allAnims) {
+                    if (anim != DialogAnimation.NONE && anim != DialogAnimation.RANDOM) {
+                        validAnims.add(anim);
+                    }
+                }
+                DialogAnimation randomAnim = validAnims.get((int)(Math.random() * validAnims.size()));
+                animateDialog(dialog, randomAnim);
+            }
+        }
     }
 
     private StackPane rootContainer;
@@ -2903,6 +3585,11 @@ public class ContentPanel extends StackPane {
 
         if (isAnimating || (currentTime - lastSwitchTime) < MIN_SWITCH_INTERVAL) {
             return;
+        }
+
+        if (verifyExecutor != null && !verifyExecutor.isShutdown()) {
+            verifyExecutor.shutdownNow();
+            verifyExecutor = null;
         }
 
         lastSwitchTime = currentTime;

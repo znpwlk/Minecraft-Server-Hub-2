@@ -303,6 +303,7 @@ public class ServerCore {
     }
 
     private void killProcessByPid(long pid) {
+        Process killProcess = null;
         try {
             String os = System.getProperty("os.name").toLowerCase();
             ProcessBuilder pb;
@@ -312,10 +313,14 @@ public class ServerCore {
                 pb = new ProcessBuilder("kill", "-9", String.valueOf(pid));
             }
             pb.inheritIO();
-            Process killProcess = pb.start();
+            killProcess = pb.start();
             killProcess.waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception e) {
             log("系统命令终止进程失败: " + e.getMessage(), "ERROR");
+        } finally {
+            if (killProcess != null && killProcess.isAlive()) {
+                killProcess.destroyForcibly();
+            }
         }
     }
 
@@ -751,7 +756,9 @@ public class ServerCore {
     
     private void setEulaIssue(boolean hasIssue) {
         if (hasIssue && !hasEulaIssue && eulaIssueCallback != null) {
-            Platform.runLater(eulaIssueCallback);
+            javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(javafx.util.Duration.millis(100));
+            delay.setOnFinished(e -> eulaIssueCallback.run());
+            delay.play();
         }
         hasEulaIssue = hasIssue;
     }

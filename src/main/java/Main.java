@@ -26,7 +26,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 
 public class Main extends Application {
-    public static final String VERSION = "2.2";
+    public static final String VERSION = "2.3";
     
     private Stage primaryStage;
     private StackPane rootContainer;
@@ -580,60 +580,67 @@ public class Main extends Application {
     }
 
     private void setupTrayIcon() {
-        if (!SystemTray.isSupported()) {
+        if (isLinux()) {
             return;
         }
-
-        Platform.setImplicitExit(false);
-
-        SystemTray tray = SystemTray.getSystemTray();
-
-        java.awt.PopupMenu popup = new java.awt.PopupMenu();
-
-        java.awt.MenuItem showItem = new java.awt.MenuItem("Show");
-        showItem.addActionListener(e -> Platform.runLater(() -> {
-            primaryStage.show();
-            primaryStage.toFront();
-        }));
-
-        java.awt.MenuItem exitItem = new java.awt.MenuItem("Exit");
-        exitItem.addActionListener(e -> Platform.runLater(() -> {
-            if (primaryStage.isShowing()) {
-                handleWindowClose();
-            } else {
-                handleTrayExit();
-            }
-        }));
-
-        popup.add(showItem);
-        popup.addSeparator();
-        popup.add(exitItem);
-
-        BufferedImage trayImage = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        java.awt.Graphics2D g2d = trayImage.createGraphics();
-        g2d.setColor(java.awt.Color.GREEN);
-        g2d.fillRect(0, 0, 16, 16);
-        g2d.dispose();
-
-        trayIcon = new TrayIcon(trayImage, "MSH2", popup);
-        trayIcon.setImageAutoSize(true);
-        trayIcon.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2) {
-                    Platform.runLater(() -> {
-                        primaryStage.show();
-                        primaryStage.toFront();
-                    });
-                }
-            }
-        });
-
         try {
+            if (!SystemTray.isSupported()) {
+                return;
+            }
+
+            Platform.setImplicitExit(false);
+
+            SystemTray tray = SystemTray.getSystemTray();
+
+            java.awt.PopupMenu popup = new java.awt.PopupMenu();
+
+            java.awt.MenuItem showItem = new java.awt.MenuItem("Show");
+            showItem.addActionListener(e -> Platform.runLater(() -> {
+                primaryStage.show();
+                primaryStage.toFront();
+            }));
+
+            java.awt.MenuItem exitItem = new java.awt.MenuItem("Exit");
+            exitItem.addActionListener(e -> Platform.runLater(() -> {
+                if (primaryStage.isShowing()) {
+                    handleWindowClose();
+                } else {
+                    handleTrayExit();
+                }
+            }));
+
+            popup.add(showItem);
+            popup.addSeparator();
+            popup.add(exitItem);
+
+            BufferedImage trayImage = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+            java.awt.Graphics2D g2d = trayImage.createGraphics();
+            g2d.setColor(java.awt.Color.GREEN);
+            g2d.fillRect(0, 0, 16, 16);
+            g2d.dispose();
+
+            trayIcon = new TrayIcon(trayImage, "MSH2", popup);
+            trayIcon.setImageAutoSize(true);
+            trayIcon.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    if (e.getClickCount() == 2) {
+                        Platform.runLater(() -> {
+                            primaryStage.show();
+                            primaryStage.toFront();
+                        });
+                    }
+                }
+            });
+
             tray.add(trayIcon);
         } catch (Exception e) {
-            System.out.println("无法添加托盘图标: " + e.getMessage());
+            System.out.println("系统托盘初始化失败: " + e.getMessage());
         }
+    }
+
+    private boolean isLinux() {
+        return System.getProperty("os.name").toLowerCase().contains("linux");
     }
 
     private void handleTrayExit() {
@@ -729,6 +736,18 @@ public class Main extends Application {
         StackPane.setAlignment(notificationContainer, Pos.TOP_RIGHT);
     }
 
+    private void openUrl(String url) {
+        try {
+            if (isLinux()) {
+                Runtime.getRuntime().exec(new String[]{"xdg-open", url});
+            } else {
+                java.awt.Desktop.getDesktop().browse(new java.net.URI(url));
+            }
+        } catch (Exception ex) {
+            showNotification("无法打开链接: " + ex.getMessage(), "error");
+        }
+    }
+
     public void showNotification(String message, String type) {
         Platform.runLater(() -> {
             HBox notification = createNotification(message, type);
@@ -765,7 +784,7 @@ public class Main extends Application {
         notification.setAlignment(Pos.CENTER_LEFT);
         notification.setStyle(
             "-fx-background-color: " + bgColor + ";" +
-            "-fx-background-radius: 8;" +
+            "-fx-background-radius: 4;" +
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0, 0, 4);"
         );
         notification.setMaxWidth(300);
@@ -823,7 +842,7 @@ public class Main extends Application {
         notification.setOnMouseEntered(e -> {
             notification.setStyle(
                 "-fx-background-color: " + bgColor.replace("0.95", "1.0") + ";" +
-                "-fx-background-radius: 8;" +
+                "-fx-background-radius: 4;" +
                 "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 12, 0, 0, 6);"
             );
         });
@@ -831,7 +850,7 @@ public class Main extends Application {
         notification.setOnMouseExited(e -> {
             notification.setStyle(
                 "-fx-background-color: " + bgColor + ";" +
-                "-fx-background-radius: 8;" +
+                "-fx-background-radius: 4;" +
                 "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0, 0, 4);"
             );
         });
@@ -1004,46 +1023,83 @@ public class Main extends Application {
         serverListScroll.setContent(serverListBox);
 
         String closeButtonText = hasExternalServer ? "强制关闭并退出" : "关闭服务器并退出";
-        java.util.List<DialogButton> buttons = java.util.Arrays.asList(
-            new DialogButton(closeButtonText, "#f44336", "#d32f2f", "#FFFFFF", () -> {
-                java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                    Thread t = new Thread(r);
-                    t.setDaemon(true);
-                    return t;
-                });
-                executor.submit(() -> {
-                    for (ServerCore server : activeServers) {
-                        if (server.isReattached()) {
-                            server.forceStop();
-                        } else {
-                            server.stop();
+        java.util.List<DialogButton> buttons;
+        if (isLinux()) {
+            buttons = java.util.Arrays.asList(
+                new DialogButton(closeButtonText, "#f44336", "#d32f2f", "#FFFFFF", () -> {
+                    java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                        Thread t = new Thread(r);
+                        t.setDaemon(true);
+                        return t;
+                    });
+                    executor.submit(() -> {
+                        for (ServerCore server : activeServers) {
+                            if (server.isReattached()) {
+                                server.forceStop();
+                            } else {
+                                server.stop();
+                            }
                         }
-                    }
-                    int waitCount = 0;
-                    while (serverManager.getRunningCount() > 0 && waitCount < 30) {
-                        try {
-                            Thread.sleep(500);
-                        } catch (InterruptedException ignored) {}
-                        waitCount++;
-                    }
-                    if (serverManager.getRunningCount() > 0) {
-                        serverManager.forceStopAll();
-                    }
-                    Platform.runLater(this::cleanupAndExit);
-                    executor.shutdown();
-                });
-            }),
-            new DialogButton("最小化到托盘", "#e3f2fd", "#bbdefb", "#333333", this::minimizeToTray),
-            new DialogButton("后台运行", "#f5f5f5", "#e0e0e0", "#333333", () -> primaryStage.hide()),
-            new DialogButton("取消", "transparent", "#f0f0f0", "#666666", null)
-        );
+                        int waitCount = 0;
+                        while (serverManager.getRunningCount() > 0 && waitCount < 30) {
+                            try {
+                                Thread.sleep(500);
+                            } catch (InterruptedException ignored) {}
+                            waitCount++;
+                        }
+                        if (serverManager.getRunningCount() > 0) {
+                            serverManager.forceStopAll();
+                        }
+                        Platform.runLater(this::cleanupAndExit);
+                        executor.shutdown();
+                    });
+                }),
+                new DialogButton("取消", "transparent", "#f0f0f0", "#666666", null)
+            );
+        } else {
+            buttons = java.util.Arrays.asList(
+                new DialogButton(closeButtonText, "#f44336", "#d32f2f", "#FFFFFF", () -> {
+                    java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                        Thread t = new Thread(r);
+                        t.setDaemon(true);
+                        return t;
+                    });
+                    executor.submit(() -> {
+                        for (ServerCore server : activeServers) {
+                            if (server.isReattached()) {
+                                server.forceStop();
+                            } else {
+                                server.stop();
+                            }
+                        }
+                        int waitCount = 0;
+                        while (serverManager.getRunningCount() > 0 && waitCount < 30) {
+                            try {
+                                Thread.sleep(500);
+                            } catch (InterruptedException ignored) {}
+                            waitCount++;
+                        }
+                        if (serverManager.getRunningCount() > 0) {
+                            serverManager.forceStopAll();
+                        }
+                        Platform.runLater(this::cleanupAndExit);
+                        executor.shutdown();
+                    });
+                }),
+                new DialogButton("最小化到托盘", "#e3f2fd", "#bbdefb", "#333333", this::minimizeToTray),
+                new DialogButton("后台运行", "#f5f5f5", "#e0e0e0", "#333333", () -> primaryStage.hide()),
+                new DialogButton("取消", "transparent", "#f0f0f0", "#666666", null)
+            );
+        }
 
         showGenericDialog("确认关闭", "以下服务器正在运行：", buttons, serverListScroll);
     }
 
     private void cleanupAndExit() {
-        if (trayIcon != null) {
-            SystemTray.getSystemTray().remove(trayIcon);
+        if (!isLinux() && trayIcon != null) {
+            try {
+                SystemTray.getSystemTray().remove(trayIcon);
+            } catch (Exception ignored) {}
         }
         Platform.exit();
         System.exit(0);
@@ -1177,11 +1233,7 @@ public class Main extends Application {
         downloadLink.setTextFill(Color.web("#1565c0"));
         downloadLink.setWrapText(true);
         downloadLink.setOnAction(e -> {
-            try {
-                java.awt.Desktop.getDesktop().browse(new java.net.URI(result.downloadUrl));
-            } catch (Exception ex) {
-                showNotification("无法打开链接: " + ex.getMessage(), "error");
-            }
+            openUrl(result.downloadUrl);
         });
 
         VBox linkBox = new VBox(5);

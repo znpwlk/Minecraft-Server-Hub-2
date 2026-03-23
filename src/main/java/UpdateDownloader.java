@@ -4,10 +4,24 @@ import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 
 public class UpdateDownloader {
 
     private static final String UPDATE_MARKER_FILE = "msh/update_marker.txt";
+    private static final String DOWNLOAD_PROGRESS_FILE = "msh/download_progress.txt";
+    private static final int MAX_RETRY_COUNT = 3;
+    private static final long RETRY_DELAY_MS = 2000;
+
+    public enum DownloadError {
+        NETWORK_ERROR,
+        DISK_ERROR,
+        CHECKSUM_ERROR,
+        SERVER_ERROR,
+        CANCELLED,
+        UNKNOWN
+    }
 
     public static class DeleteResult {
         public boolean success;
@@ -21,10 +35,80 @@ public class UpdateDownloader {
         }
     }
 
+    public static class DownloadResult {
+        public boolean success;
+        public String message;
+        public String newJarPath;
+        public DownloadError error;
+
+        public DownloadResult(boolean success, String message, String newJarPath, DownloadError error) {
+            this.success = success;
+            this.message = message;
+            this.newJarPath = newJarPath;
+            this.error = error;
+        }
+
+        public DownloadResult(boolean success, String message, String newJarPath) {
+            this(success, message, newJarPath, success ? null : DownloadError.UNKNOWN);
+        }
+    }
+
     public interface DownloadCallback {
         void onProgress(int percentage, String speed);
         void onComplete(boolean success, String message);
         void onComplete(boolean success, String message, String newJarPath);
+        default void onComplete(DownloadResult result) {
+            onComplete(result.success, result.message, result.newJarPath);
+        }
+    }
+
+    private static class DownloadProgress {
+        String downloadUrl;
+        String version;
+        long downloadedBytes;
+        long totalBytes;
+        String tempFilePath;
+        long lastModified;
+
+        DownloadProgress(String downloadUrl, String version, long downloadedBytes, long totalBytes, String tempFilePath) {
+            this.downloadUrl = downloadUrl;
+            this.version = version;
+            this.downloadedBytes = downloadedBytes;
+            this.totalBytes = totalBytes;
+            this.tempFilePath = tempFilePath;
+            this.lastModified = System.currentTimeMillis();
+        }
+
+        boolean isValid(String currentUrl, String currentVersion) {
+            return downloadUrl.equals(currentUrl) && version.equals(currentVersion);
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - lastModified > 7 * 24 * 60 * 60 * 1000;
+        }
+    }
+
+    private static class SpeedCalculator {
+        private final List<Double> speedSamples = new ArrayList<>();
+        private static final int MAX_SAMPLES = 5;
+
+        void addSample(double speed) {
+            speedSamples.add(speed);
+            if (speedSamples.size() > MAX_SAMPLES) {
+                speedSamples.remove(0);
+            }
+        }
+
+        double getSmoothedSpeed() {
+            if (speedSamples.isEmpty()) {
+                return 0;
+            }
+            double sum = 0;
+            for (double speed : speedSamples) {
+                sum += speed;
+            }
+            return sum / speedSamples.size();
+        }
     }
 
     public static void downloadUpdate(String downloadUrl, String expectedSha256, String newVersion, DownloadCallback callback) {
@@ -34,117 +118,447 @@ public class UpdateDownloader {
             return t;
         });
         executor.submit(() -> {
-            try {
-                String currentJarPath = getCurrentJarPath();
-                if (currentJarPath == null) {
-                    callback.onComplete(false, "无法获取当前程序路径", null);
-                    return;
-                }
+            DownloadResult result = doDownload(downloadUrl, expectedSha256, newVersion, callback);
+            callback.onComplete(result);
+            executor.shutdown();
+        });
+    }
 
-                File currentJar = new File(currentJarPath);
-                File parentDir = currentJar.getParentFile();
+    private static DownloadResult doDownload(String downloadUrl, String expectedSha256, String newVersion, DownloadCallback callback) {
+        String currentJarPath = getCurrentJarPath();
+        if (currentJarPath == null) {
+            return new DownloadResult(false, "无法获取当前程序路径", null, DownloadError.UNKNOWN);
+        }
 
-                if (parentDir == null || !parentDir.exists()) {
-                    callback.onComplete(false, "无法获取程序所在目录", null);
-                    return;
-                }
+        File currentJar = new File(currentJarPath);
+        File parentDir = currentJar.getParentFile();
 
-                String newJarName = "msh-" + newVersion + ".jar";
-                File newJar = new File(parentDir, newJarName);
+        if (parentDir == null || !parentDir.exists()) {
+            return new DownloadResult(false, "无法获取程序所在目录", null, DownloadError.DISK_ERROR);
+        }
 
-                if (newJar.exists()) {
-                    if (!newJar.delete()) {
-                        callback.onComplete(false, "无法清理旧下载文件", null);
-                        return;
+        String newJarName = "msh-" + newVersion + ".jar";
+        File newJar = new File(parentDir, newJarName);
+        File defaultTempJar = new File(parentDir, newJarName + ".tmp");
+
+        if (newJar.exists()) {
+            if (!newJar.delete()) {
+                return new DownloadResult(false, "无法清理旧下载文件", null, DownloadError.DISK_ERROR);
+            }
+        }
+
+        DownloadProgress progress = loadDownloadProgress(downloadUrl, newVersion);
+        long existingSize = 0;
+        File tempJar = defaultTempJar;
+
+        if (progress != null && progress.isValid(downloadUrl, newVersion) && !progress.isExpired()) {
+            File existingTemp = new File(progress.tempFilePath);
+            if (existingTemp.exists() && existingTemp.length() == progress.downloadedBytes) {
+                existingSize = progress.downloadedBytes;
+                if (!defaultTempJar.equals(existingTemp)) {
+                    tempJar = existingTemp;
+                    if (defaultTempJar.exists() && !defaultTempJar.delete()) {
+                        return new DownloadResult(false, "无法清理默认临时文件", null, DownloadError.DISK_ERROR);
                     }
                 }
+            } else {
+                clearDownloadProgress();
+                progress = null;
+            }
+        } else {
+            clearDownloadProgress();
+            progress = null;
+        }
 
-                callback.onProgress(5, "");
+        if (progress == null && defaultTempJar.exists()) {
+            if (!defaultTempJar.delete()) {
+                return new DownloadResult(false, "无法清理临时文件", null, DownloadError.DISK_ERROR);
+            }
+        }
 
+        callback.onProgress(5, "");
+
+        HttpURLConnection conn = null;
+        int retryCount = 0;
+        long totalBytes = progress != null ? progress.totalBytes : -1;
+        long downloadedBytes = existingSize;
+        SpeedCalculator speedCalc = new SpeedCalculator();
+
+        long initialDownloadedBytes = downloadedBytes;
+        long lastSaveTime = System.currentTimeMillis();
+
+        while (retryCount < MAX_RETRY_COUNT) {
+            try {
                 URL url = new URI(downloadUrl).toURL();
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(30000);
+                conn.setInstanceFollowRedirects(true);
 
-                int responseCode = conn.getResponseCode();
-                if (responseCode != 200) {
-                    callback.onComplete(false, "服务器返回错误: " + responseCode, null);
-                    return;
+                if (downloadedBytes > 0) {
+                    conn.setRequestProperty("Range", "bytes=" + downloadedBytes + "-");
                 }
 
-                int fileSize = conn.getContentLength();
-                callback.onProgress(10, "");
+                int responseCode = conn.getResponseCode();
+                boolean isPartial = responseCode == 206;
 
+                if (responseCode != 200 && responseCode != 206) {
+                    if (progress != null && downloadedBytes > 0) {
+                        progress.downloadedBytes = downloadedBytes;
+                        progress.lastModified = System.currentTimeMillis();
+                        saveDownloadProgress(progress);
+                    }
+                    return new DownloadResult(false, "服务器返回错误: " + responseCode, null, DownloadError.SERVER_ERROR);
+                }
+
+                if (downloadedBytes > 0 && !isPartial) {
+                    if (tempJar.exists() && !tempJar.delete()) {
+                        return new DownloadResult(false, "无法清理临时文件以重新开始下载", null, DownloadError.DISK_ERROR);
+                    }
+                    downloadedBytes = 0;
+                    initialDownloadedBytes = 0;
+                    speedCalc = new SpeedCalculator();
+                    clearDownloadProgress();
+                    retryCount++;
+                    continue;
+                }
+
+                String contentType = conn.getContentType();
+                if (contentType != null && !contentType.contains("application") && !contentType.contains("octet-stream") && !contentType.contains("jar")) {
+                    if (progress != null && downloadedBytes > 0) {
+                        progress.downloadedBytes = downloadedBytes;
+                        progress.lastModified = System.currentTimeMillis();
+                        saveDownloadProgress(progress);
+                    }
+                    return new DownloadResult(false, "服务器返回的文件类型不正确: " + contentType, null, DownloadError.SERVER_ERROR);
+                }
+
+                long contentLength = conn.getContentLengthLong();
+                if (contentLength > 0) {
+                    if (totalBytes <= 0) {
+                        totalBytes = isPartial ? downloadedBytes + contentLength : contentLength;
+                    }
+
+                    long freeSpace = parentDir.getFreeSpace();
+                    long requiredSpace = isPartial ? contentLength : totalBytes;
+                    if (freeSpace < requiredSpace) {
+                        if (progress != null && downloadedBytes > 0) {
+                            progress.downloadedBytes = downloadedBytes;
+                            progress.lastModified = System.currentTimeMillis();
+                            saveDownloadProgress(progress);
+                        }
+                        return new DownloadResult(false, "磁盘空间不足，需要 " + formatBytes(requiredSpace) + "，可用 " + formatBytes(freeSpace), null, DownloadError.DISK_ERROR);
+                    }
+                }
+
+                if (progress == null) {
+                    progress = new DownloadProgress(downloadUrl, newVersion, downloadedBytes, totalBytes, tempJar.getAbsolutePath());
+                } else if (totalBytes > 0 && progress.totalBytes <= 0) {
+                    progress.totalBytes = totalBytes;
+                }
+
+                int startProgress = 10;
+                if (totalBytes > 0 && downloadedBytes > 0) {
+                    startProgress = 10 + (int) ((downloadedBytes * 80) / totalBytes);
+                }
+                callback.onProgress(startProgress, "");
+
+                boolean append = isPartial && downloadedBytes > 0;
                 try (InputStream in = conn.getInputStream();
-                     FileOutputStream out = new FileOutputStream(newJar)) {
+                     FileOutputStream out = new FileOutputStream(tempJar, append)) {
 
                     byte[] buffer = new byte[8192];
                     int bytesRead;
-                    long totalRead = 0;
-                    int lastProgress = 10;
                     long lastTime = System.currentTimeMillis();
-                    long lastRead = 0;
+                    long lastRead = downloadedBytes;
+                    int lastProgress = startProgress;
 
                     while ((bytesRead = in.read(buffer)) != -1) {
                         out.write(buffer, 0, bytesRead);
-                        totalRead += bytesRead;
+                        downloadedBytes += bytesRead;
 
-                        if (fileSize > 0) {
-                            int progress = 10 + (int) ((totalRead * 80) / fileSize);
-                            if (progress > lastProgress) {
-                                lastProgress = progress;
+                        long currentTime = System.currentTimeMillis();
+                        long timeDiff = currentTime - lastTime;
 
-                                long currentTime = System.currentTimeMillis();
-                                long timeDiff = currentTime - lastTime;
-                                if (timeDiff >= 500) {
-                                    long bytesDiff = totalRead - lastRead;
-                                    double speedBps = (bytesDiff * 1000.0) / timeDiff;
-                                    String speedStr = formatSpeed(speedBps);
-                                    callback.onProgress(progress, speedStr);
-                                    lastTime = currentTime;
-                                    lastRead = totalRead;
-                                } else {
-                                    callback.onProgress(progress, "");
+                        if (timeDiff >= 500) {
+                            long bytesDiff = downloadedBytes - lastRead;
+                            double instantSpeed = (bytesDiff * 1000.0) / timeDiff;
+                            speedCalc.addSample(instantSpeed);
+                            double smoothedSpeed = speedCalc.getSmoothedSpeed();
+                            String speedStr = formatSpeed(smoothedSpeed);
+
+                            if (totalBytes > 0) {
+                                int progressPercent = 10 + (int) ((downloadedBytes * 80) / totalBytes);
+                                if (progressPercent > lastProgress) {
+                                    lastProgress = progressPercent;
+                                    callback.onProgress(progressPercent, speedStr);
                                 }
                             }
+
+                            if (currentTime - lastSaveTime >= 2000 && progress != null) {
+                                progress.downloadedBytes = downloadedBytes;
+                                progress.lastModified = System.currentTimeMillis();
+                                saveDownloadProgress(progress);
+                                lastSaveTime = currentTime;
+                            }
+
+                            lastTime = currentTime;
+                            lastRead = downloadedBytes;
                         }
                     }
+
+                    out.flush();
                 }
 
-                callback.onProgress(90, "");
-
-                if (!newJar.exists() || newJar.length() == 0) {
-                    callback.onComplete(false, "下载文件失败，文件为空", null);
-                    return;
+                if (progress != null && downloadedBytes > initialDownloadedBytes) {
+                    progress.downloadedBytes = downloadedBytes;
+                    progress.lastModified = System.currentTimeMillis();
+                    saveDownloadProgress(progress);
                 }
 
-                if (!expectedSha256.isEmpty()) {
-                    String actualSha256 = calculateSha256(newJar);
-                    if (!actualSha256.equalsIgnoreCase(expectedSha256)) {
-                        newJar.delete();
-                        callback.onComplete(false, "文件校验失败，请重新下载", null);
-                        return;
+                break;
+
+            } catch (java.net.SocketTimeoutException e) {
+                if (progress != null && downloadedBytes > initialDownloadedBytes) {
+                    progress.downloadedBytes = downloadedBytes;
+                    progress.lastModified = System.currentTimeMillis();
+                    saveDownloadProgress(progress);
+                }
+                retryCount++;
+                if (retryCount >= MAX_RETRY_COUNT) {
+                    return new DownloadResult(false, "连接超时，已重试 " + MAX_RETRY_COUNT + " 次", null, DownloadError.NETWORK_ERROR);
+                }
+                lastSaveTime = System.currentTimeMillis();
+                try {
+                    Thread.sleep(RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return new DownloadResult(false, "下载被取消", null, DownloadError.CANCELLED);
+                }
+            } catch (java.net.UnknownHostException | java.net.ConnectException e) {
+                if (progress != null && downloadedBytes > initialDownloadedBytes) {
+                    progress.downloadedBytes = downloadedBytes;
+                    progress.lastModified = System.currentTimeMillis();
+                    saveDownloadProgress(progress);
+                }
+                return new DownloadResult(false, "网络连接失败: " + e.getMessage(), null, DownloadError.NETWORK_ERROR);
+            } catch (IOException e) {
+                if (e.getMessage() != null && e.getMessage().contains("space")) {
+                    if (progress != null && downloadedBytes > initialDownloadedBytes) {
+                        progress.downloadedBytes = downloadedBytes;
+                        progress.lastModified = System.currentTimeMillis();
+                        saveDownloadProgress(progress);
                     }
+                    return new DownloadResult(false, "磁盘空间不足", null, DownloadError.DISK_ERROR);
                 }
-
-                callback.onProgress(95, "");
-
-                if (!saveUpdateMarker(currentJarPath, newJar.getAbsolutePath())) {
-                    newJar.delete();
-                    callback.onComplete(false, "无法保存更新标记，更新取消", null);
-                    return;
+                if (progress != null && downloadedBytes > initialDownloadedBytes) {
+                    progress.downloadedBytes = downloadedBytes;
+                    progress.lastModified = System.currentTimeMillis();
+                    saveDownloadProgress(progress);
                 }
-
-                callback.onProgress(100, "");
-                callback.onComplete(true, "下载完成", newJar.getAbsolutePath());
-
+                retryCount++;
+                if (retryCount >= MAX_RETRY_COUNT) {
+                    return new DownloadResult(false, "下载失败: " + e.getMessage(), null, DownloadError.NETWORK_ERROR);
+                }
+                lastSaveTime = System.currentTimeMillis();
+                try {
+                    Thread.sleep(RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return new DownloadResult(false, "下载被取消", null, DownloadError.CANCELLED);
+                }
             } catch (Exception e) {
-                e.printStackTrace();
-                callback.onComplete(false, "下载失败: " + e.getMessage(), null);
+                if (progress != null && downloadedBytes > initialDownloadedBytes) {
+                    progress.downloadedBytes = downloadedBytes;
+                    progress.lastModified = System.currentTimeMillis();
+                    saveDownloadProgress(progress);
+                }
+                return new DownloadResult(false, "下载失败: " + e.getMessage(), null, DownloadError.UNKNOWN);
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
             }
-            executor.shutdown();
-        });
+        }
+
+        if (retryCount >= MAX_RETRY_COUNT) {
+            return new DownloadResult(false, "下载失败，已重试 " + MAX_RETRY_COUNT + " 次", null, DownloadError.NETWORK_ERROR);
+        }
+
+        callback.onProgress(90, "");
+
+        if (!tempJar.exists() || tempJar.length() == 0) {
+            if (tempJar.exists()) {
+                tempJar.delete();
+            }
+            clearDownloadProgress();
+            return new DownloadResult(false, "下载文件失败，文件为空", null, DownloadError.NETWORK_ERROR);
+        }
+
+        long actualFileSize = tempJar.length();
+        if (totalBytes > 0 && actualFileSize != totalBytes) {
+            if (tempJar.exists()) {
+                tempJar.delete();
+            }
+            clearDownloadProgress();
+            return new DownloadResult(false, "文件大小不匹配，期望 " + formatBytes(totalBytes) + "，实际 " + formatBytes(actualFileSize), null, DownloadError.CHECKSUM_ERROR);
+        }
+
+        if (!expectedSha256.isEmpty()) {
+            try {
+                String actualSha256 = calculateSha256(tempJar);
+                if (!actualSha256.equalsIgnoreCase(expectedSha256)) {
+                    if (tempJar.exists()) {
+                        tempJar.delete();
+                    }
+                    clearDownloadProgress();
+                    return new DownloadResult(false, "文件校验失败，请重新下载", null, DownloadError.CHECKSUM_ERROR);
+                }
+            } catch (Exception e) {
+                if (tempJar.exists()) {
+                    tempJar.delete();
+                }
+                clearDownloadProgress();
+                return new DownloadResult(false, "校验文件时出错: " + e.getMessage(), null, DownloadError.CHECKSUM_ERROR);
+            }
+        }
+
+        if (!tempJar.renameTo(newJar)) {
+            if (tempJar.exists()) {
+                tempJar.delete();
+            }
+            clearDownloadProgress();
+            return new DownloadResult(false, "无法完成文件写入", null, DownloadError.DISK_ERROR);
+        }
+
+        if (!newJar.canRead()) {
+            if (newJar.exists()) {
+                newJar.delete();
+            }
+            clearDownloadProgress();
+            return new DownloadResult(false, "无法读取新文件", null, DownloadError.DISK_ERROR);
+        }
+
+        callback.onProgress(95, "");
+
+        if (!saveUpdateMarker(currentJarPath, newJar.getAbsolutePath())) {
+            if (newJar.exists()) {
+                newJar.delete();
+            }
+            clearDownloadProgress();
+            return new DownloadResult(false, "无法保存更新标记，更新取消", null, DownloadError.DISK_ERROR);
+        }
+
+        clearDownloadProgress();
+        callback.onProgress(100, "");
+        return new DownloadResult(true, "下载完成", newJar.getAbsolutePath());
+    }
+
+    private static void saveDownloadProgress(DownloadProgress progress) {
+        try {
+            File mshDir = new File("msh");
+            if (!mshDir.exists()) {
+                mshDir.mkdirs();
+            }
+
+            File tempFile = new File(DOWNLOAD_PROGRESS_FILE + ".tmp");
+            try (FileWriter writer = new FileWriter(tempFile)) {
+                writer.write(progress.downloadUrl + "\n");
+                writer.write(progress.version + "\n");
+                writer.write(progress.downloadedBytes + "\n");
+                writer.write(progress.totalBytes + "\n");
+                writer.write(progress.tempFilePath + "\n");
+                writer.write(progress.lastModified + "\n");
+            }
+
+            File targetFile = new File(DOWNLOAD_PROGRESS_FILE);
+            if (targetFile.exists()) {
+                targetFile.delete();
+            }
+            if (!tempFile.renameTo(targetFile)) {
+                tempFile.delete();
+            }
+
+        } catch (Exception e) {
+            File tempFile = new File(DOWNLOAD_PROGRESS_FILE + ".tmp");
+            if (tempFile.exists()) {
+                tempFile.delete();
+            }
+        }
+    }
+
+    private static DownloadProgress loadDownloadProgress(String url, String version) {
+        File file = new File(DOWNLOAD_PROGRESS_FILE);
+        if (!file.exists()) {
+            return null;
+        }
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String savedUrl = reader.readLine();
+            String savedVersion = reader.readLine();
+            String downloadedStr = reader.readLine();
+            String totalStr = reader.readLine();
+            String tempPath = reader.readLine();
+            String modifiedStr = reader.readLine();
+
+            if (savedUrl == null || savedVersion == null || downloadedStr == null ||
+                totalStr == null || tempPath == null || modifiedStr == null ||
+                savedUrl.isEmpty() || savedVersion.isEmpty() || tempPath.isEmpty()) {
+                return null;
+            }
+
+            long downloadedBytes;
+            long totalBytes;
+            long lastModified;
+            try {
+                downloadedBytes = Long.parseLong(downloadedStr);
+                totalBytes = Long.parseLong(totalStr);
+                lastModified = Long.parseLong(modifiedStr);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+
+            if (downloadedBytes < 0 || totalBytes < 0 || lastModified < 0) {
+                return null;
+            }
+
+            DownloadProgress progress = new DownloadProgress(
+                savedUrl,
+                savedVersion,
+                downloadedBytes,
+                totalBytes,
+                tempPath
+            );
+            progress.lastModified = lastModified;
+            return progress;
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void clearDownloadProgress() {
+        File file = new File(DOWNLOAD_PROGRESS_FILE);
+        File tempFile = new File(DOWNLOAD_PROGRESS_FILE + ".tmp");
+        if (file.exists()) {
+            file.delete();
+        }
+        if (tempFile.exists()) {
+            tempFile.delete();
+        }
+    }
+
+    private static String formatBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        } else if (bytes < 1024 * 1024) {
+            return String.format("%.2f KB", bytes / 1024.0);
+        } else if (bytes < 1024 * 1024 * 1024) {
+            return String.format("%.2f MB", bytes / (1024.0 * 1024));
+        } else {
+            return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+        }
     }
 
     public static DeleteResult checkAndDeleteOldVersion() {
@@ -258,18 +672,36 @@ public class UpdateDownloader {
                 return false;
             }
 
-            try (FileWriter writer = new FileWriter(markerFile)) {
+            File tempFile = new File(UPDATE_MARKER_FILE + ".tmp");
+            try (FileWriter writer = new FileWriter(tempFile)) {
                 writer.write(oldJarPath + "|" + newJarPath);
             }
 
-            return markerFile.exists();
+            if (markerFile.exists() && !markerFile.delete()) {
+                tempFile.delete();
+                return false;
+            }
+            if (!tempFile.renameTo(markerFile)) {
+                tempFile.delete();
+                return false;
+            }
+            return true;
         } catch (Exception e) {
             e.printStackTrace();
+            File tempFile = new File(UPDATE_MARKER_FILE + ".tmp");
+            if (tempFile.exists()) {
+                tempFile.delete();
+            }
             return false;
         }
     }
 
     private static boolean deleteMarkerFile(File markerFile) {
+        File tempFile = new File(UPDATE_MARKER_FILE + ".tmp");
+        if (tempFile.exists()) {
+            tempFile.delete();
+        }
+
         if (!markerFile.exists()) {
             return true;
         }
