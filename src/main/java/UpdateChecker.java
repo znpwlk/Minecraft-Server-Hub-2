@@ -1,8 +1,13 @@
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URL;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -128,10 +133,13 @@ public class UpdateChecker {
 
     private String fetchFromServer(String urlString) throws Exception {
         URL url = new URI(urlString).toURL();
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+
+        HttpURLConnection conn = createConnection(url);
         conn.setRequestMethod("GET");
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(10000);
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(60000);
+
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
         StringBuilder response = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(
@@ -142,6 +150,20 @@ public class UpdateChecker {
             }
         }
         return response.toString();
+    }
+
+    private HttpURLConnection createConnection(URL url) throws IOException {
+        try {
+            List<Proxy> proxies = ProxySelector.getDefault().select(url.toURI());
+            for (Proxy proxy : proxies) {
+                try {
+                    return (HttpURLConnection) url.openConnection(proxy);
+                } catch (IOException e) {
+                }
+            }
+        } catch (Exception e) {
+        }
+        return (HttpURLConnection) url.openConnection();
     }
 
     private String extractJsonValue(String json, String key) {

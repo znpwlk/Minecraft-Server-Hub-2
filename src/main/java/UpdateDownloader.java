@@ -1,5 +1,8 @@
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
@@ -190,11 +193,13 @@ public class UpdateDownloader {
         while (retryCount < MAX_RETRY_COUNT) {
             try {
                 URL url = new URI(downloadUrl).toURL();
-                conn = (HttpURLConnection) url.openConnection();
+                conn = createConnection(url);
                 conn.setRequestMethod("GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(30000);
+                conn.setConnectTimeout(30000);
+                conn.setReadTimeout(60000);
                 conn.setInstanceFollowRedirects(true);
+
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
                 if (downloadedBytes > 0) {
                     conn.setRequestProperty("Range", "bytes=" + downloadedBytes + "-");
@@ -761,6 +766,20 @@ public class UpdateDownloader {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
+    }
+
+    private static HttpURLConnection createConnection(URL url) throws IOException {
+        try {
+            List<Proxy> proxies = ProxySelector.getDefault().select(url.toURI());
+            for (Proxy proxy : proxies) {
+                try {
+                    return (HttpURLConnection) url.openConnection(proxy);
+                } catch (IOException e) {
+                }
+            }
+        } catch (Exception e) {
+        }
+        return (HttpURLConnection) url.openConnection();
     }
 
     private static String getCurrentJarPath() {

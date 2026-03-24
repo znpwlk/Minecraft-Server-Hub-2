@@ -26,7 +26,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 
 public class Main extends Application {
-    public static final String VERSION = "2.3";
+    public static final String VERSION = "2.4";
     
     private Stage primaryStage;
     private StackPane rootContainer;
@@ -1176,17 +1176,17 @@ public class Main extends Application {
         overlay.setPrefSize(900, 600);
         overlay.setAlignment(Pos.CENTER);
 
-        VBox dialog = new VBox(15);
+        VBox dialog = new VBox(12);
         dialog.setAlignment(Pos.CENTER);
-        dialog.setPadding(new Insets(30, 40, 30, 40));
-        dialog.setMaxWidth(450);
+        dialog.setPadding(new Insets(20, 30, 20, 30));
+        dialog.setMaxWidth(420);
         dialog.setStyle(
             "-fx-background-color: #ffebee;" +
-            "-fx-background-radius: 16;" +
+            "-fx-background-radius: 8;" +
             "-fx-border-color: #f44336;" +
-            "-fx-border-width: 3;" +
-            "-fx-border-radius: 16;" +
-            "-fx-effect: dropshadow(gaussian, rgba(244,67,54,0.5), 30, 0, 0, 0);"
+            "-fx-border-width: 2;" +
+            "-fx-border-radius: 8;" +
+            "-fx-effect: dropshadow(gaussian, rgba(244,67,54,0.4), 20, 0, 0, 3);"
         );
 
         javafx.scene.shape.SVGPath warningIcon = new javafx.scene.shape.SVGPath();
@@ -1224,6 +1224,40 @@ public class Main extends Application {
 
         infoBox.getChildren().addAll(currentVerLabel, newVerLabel, dateLabel);
 
+        VBox changelogBox = new VBox(5);
+        changelogBox.setAlignment(Pos.CENTER_LEFT);
+        changelogBox.setPadding(new Insets(5, 0, 5, 0));
+        changelogBox.setMaxHeight(100);
+        changelogBox.setPrefHeight(100);
+
+        Label changelogTitle = new Label("更新内容:");
+        changelogTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 12));
+        changelogTitle.setTextFill(Color.web("#666"));
+
+        javafx.scene.text.Text changelogText = new javafx.scene.text.Text();
+        changelogText.setFont(Font.font("Microsoft YaHei", 11));
+        changelogText.setFill(Color.web("#888"));
+        changelogText.setWrappingWidth(320);
+
+        new Thread(() -> {
+            try {
+                UpdateChecker checker = new UpdateChecker(VERSION);
+                String changelog = checker.fetchChangelog();
+                Platform.runLater(() -> changelogText.setText(changelog));
+            } catch (Exception e) {
+                Platform.runLater(() -> changelogText.setText("获取更新日志失败"));
+            }
+        }).start();
+
+        ScrollPane changelogScroll = new ScrollPane(changelogText);
+        changelogScroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        changelogScroll.setFitToWidth(true);
+        changelogScroll.setPrefHeight(80);
+        changelogScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        changelogScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        changelogBox.getChildren().addAll(changelogTitle, changelogScroll);
+
         Label linkTitle = new Label("下载链接:");
         linkTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 13));
         linkTitle.setTextFill(Color.web("#333"));
@@ -1241,7 +1275,7 @@ public class Main extends Application {
         linkBox.getChildren().addAll(linkTitle, downloadLink);
 
         javafx.scene.control.ProgressBar progressBar = new javafx.scene.control.ProgressBar(0);
-        progressBar.setPrefWidth(350);
+        progressBar.setPrefWidth(320);
         progressBar.setVisible(false);
         progressBar.setStyle("-fx-accent: #d32f2f;");
 
@@ -1327,7 +1361,7 @@ public class Main extends Application {
         btnBox.setPadding(new Insets(15, 0, 0, 0));
         btnBox.getChildren().addAll(updateBtn);
 
-        dialog.getChildren().addAll(warningIcon, titleLabel, urgentLabel, infoBox, linkBox, progressBox, btnBox);
+        dialog.getChildren().addAll(warningIcon, titleLabel, urgentLabel, infoBox, changelogBox, linkBox, progressBox, btnBox);
         overlay.getChildren().add(dialog);
         rootContainer.getChildren().add(overlay);
 
@@ -1450,14 +1484,14 @@ public class Main extends Application {
             overlay.setPrefSize(900, 600);
             overlay.setAlignment(Pos.CENTER);
 
-            VBox dialog = new VBox(15);
+            VBox dialog = new VBox(12);
             dialog.setAlignment(Pos.CENTER);
-            dialog.setPadding(new Insets(25, 35, 25, 35));
+            dialog.setPadding(new Insets(20, 30, 20, 30));
             dialog.setMaxWidth(420);
             dialog.setStyle(
                 "-fx-background-color: white;" +
-                "-fx-background-radius: 12;" +
-                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 20, 0, 0, 5);"
+                "-fx-background-radius: 8;" +
+                "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 15, 0, 0, 3);"
             );
 
             javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
@@ -1487,6 +1521,40 @@ public class Main extends Application {
             dateLabel.setTextFill(Color.web("#888"));
 
             infoBox.getChildren().addAll(currentVerLabel, newVerLabel, dateLabel);
+
+            VBox changelogBox = new VBox(5);
+            changelogBox.setAlignment(Pos.CENTER_LEFT);
+            changelogBox.setPadding(new Insets(5, 0, 5, 0));
+            changelogBox.setMaxHeight(100);
+            changelogBox.setPrefHeight(100);
+
+            Label changelogTitle = new Label("更新内容:");
+            changelogTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 12));
+            changelogTitle.setTextFill(Color.web("#666"));
+
+            javafx.scene.text.Text changelogText = new javafx.scene.text.Text();
+            changelogText.setFont(Font.font("Microsoft YaHei", 11));
+            changelogText.setFill(Color.web("#888"));
+            changelogText.setWrappingWidth(320);
+
+            new Thread(() -> {
+                try {
+                    UpdateChecker checker = new UpdateChecker(VERSION);
+                    String changelog = checker.fetchChangelog();
+                    Platform.runLater(() -> changelogText.setText(changelog));
+                } catch (Exception e) {
+                    Platform.runLater(() -> changelogText.setText("获取更新日志失败"));
+                }
+            }).start();
+
+            ScrollPane changelogScroll = new ScrollPane(changelogText);
+            changelogScroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+            changelogScroll.setFitToWidth(true);
+            changelogScroll.setPrefHeight(80);
+            changelogScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+            changelogScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+            changelogBox.getChildren().addAll(changelogTitle, changelogScroll);
 
             javafx.scene.control.ProgressBar progressBar = new javafx.scene.control.ProgressBar(0);
             progressBar.setPrefWidth(320);
@@ -1601,7 +1669,7 @@ public class Main extends Application {
 
             btnBox.getChildren().addAll(updateBtn, laterBtn);
 
-            dialog.getChildren().addAll(icon, titleLabel, infoBox, progressBox, btnBox);
+            dialog.getChildren().addAll(icon, titleLabel, infoBox, changelogBox, progressBox, btnBox);
             overlay.getChildren().add(dialog);
             rootContainer.getChildren().add(overlay);
 

@@ -2139,15 +2139,16 @@ public class ContentPanel extends StackPane {
         checkTitle.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 16));
         checkTitle.setTextFill(Color.WHITE);
 
-        Label checkDesc = new Label("点击按钮检查是否有新版本可用");
+        Label checkDesc = new Label("进入页面自动检查更新");
         checkDesc.setFont(Font.font("Microsoft YaHei", 12));
         checkDesc.setTextFill(Color.rgb(180, 180, 180));
 
-        Button checkBtn = createSmallIconBtn("检查更新", "#2196F3", "M12 16.5l4-4h-3v-6h-2v6H8l4 4zm-6 2h12v2H6v-2z");
+        Button checkBtn = createSmallIconBtn("重新检查", "#2196F3", "M12 16.5l4-4h-3v-6h-2v6H8l4 4zm-6 2h12v2H6v-2z");
+        checkBtn.setVisible(false);
 
-        Label resultLabel = new Label("");
+        Label resultLabel = new Label("正在检查更新...");
         resultLabel.setFont(Font.font("Microsoft YaHei", 13));
-        resultLabel.setTextFill(Color.WHITE);
+        resultLabel.setTextFill(Color.rgb(200, 200, 200));
         resultLabel.setWrapText(true);
 
         javafx.scene.control.ProgressBar progressBar = new javafx.scene.control.ProgressBar(0);
@@ -2163,17 +2164,19 @@ public class ContentPanel extends StackPane {
         UpdateChecker.UpdateResult[] checkResult = new UpdateChecker.UpdateResult[1];
         final javafx.scene.text.Text[] changelogContentRef = new javafx.scene.text.Text[1];
 
-        checkBtn.setOnAction(e -> {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+
+        Runnable checkUpdateTask = () -> {
             resultLabel.setText("正在检查更新...");
+            resultLabel.setTextFill(Color.rgb(200, 200, 200));
             checkBtn.setDisable(true);
             updateBtn.setVisible(false);
             progressBar.setVisible(false);
 
-            java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r);
-                t.setDaemon(true);
-                return t;
-            });
             executor.submit(() -> {
                 try {
                     UpdateChecker checker = new UpdateChecker(Main.VERSION);
@@ -2183,6 +2186,7 @@ public class ContentPanel extends StackPane {
 
                     Platform.runLater(() -> {
                         checkBtn.setDisable(false);
+                        checkBtn.setVisible(true);
                         latestVersionLabel.setText(checkResult[0].latestVersion);
                         latestVersionLabel.setTextFill(Color.rgb(100, 255, 100));
                         if (changelogContentRef[0] != null) {
@@ -2214,14 +2218,18 @@ public class ContentPanel extends StackPane {
                 } catch (Exception ex) {
                     Platform.runLater(() -> {
                         checkBtn.setDisable(false);
+                        checkBtn.setVisible(true);
                         resultLabel.setTextFill(Color.rgb(255, 100, 100));
                         resultLabel.setText("检查更新失败: " + ex.getMessage());
                         showAlert("检查更新失败，请检查网络连接或稍后重试");
                     });
                 }
-                executor.shutdown();
             });
-        });
+        };
+
+        checkBtn.setOnAction(e -> checkUpdateTask.run());
+
+        checkUpdateTask.run();
 
         updateBtn.setOnAction(e -> {
             if (checkResult[0] == null) return;
