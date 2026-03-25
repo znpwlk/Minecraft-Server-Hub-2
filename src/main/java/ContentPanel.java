@@ -1201,7 +1201,47 @@ public class ContentPanel extends StackPane {
 
         File configFile = GameRules.getConfigFile(currentServer.getWorkingDir());
         if (!configFile.exists()) {
-            GameRules.createDefaultConfig(currentServer.getWorkingDir());
+            VBox emptyView = new VBox(20);
+            emptyView.setAlignment(Pos.CENTER);
+            emptyView.setPadding(new Insets(50));
+
+            Label title = new Label("配置管理 - " + currentServer.getName());
+            title.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 22));
+            title.setTextFill(Color.WHITE);
+
+            Label msgLabel = new Label("未找到配置文件");
+            msgLabel.setFont(Font.font("Microsoft YaHei", FontWeight.BOLD, 18));
+            msgLabel.setTextFill(Color.rgb(255, 100, 100));
+
+            Label descLabel = new Label("请先启动服务器一次，让服务器自动生成配置文件\n或者手动创建 server.properties 文件");
+            descLabel.setFont(Font.font("Microsoft YaHei", 13));
+            descLabel.setTextFill(Color.rgb(180, 180, 180));
+            descLabel.setWrapText(true);
+            descLabel.setAlignment(Pos.CENTER);
+
+            emptyView.getChildren().addAll(title, msgLabel, descLabel);
+
+            String transitionType = determineTransition("config");
+            switchView(emptyView, transitionType);
+            currentPage = "config";
+
+            if (sidebar != null) {
+                sidebar.showSubPageNav(
+                    currentServer.getName(),
+                    () -> {
+                        mainApp.setCurrentPage("list");
+                        showServerList();
+                    },
+                    "config",
+                    () -> showConsole(),
+                    () -> showConfig(),
+                    () -> showLogSettingsPage(),
+                    () -> showGameRulesPage(),
+                    () -> showSettings(),
+                    () -> showServerAddress()
+                );
+            }
+            return;
         }
 
         VBox configView = new VBox(15);
@@ -1255,6 +1295,11 @@ public class ContentPanel extends StackPane {
             descLabel.setWrapText(true);
 
             javafx.scene.control.Control inputControl;
+            Label errorLabel = new Label();
+            errorLabel.setFont(Font.font("Microsoft YaHei", 11));
+            errorLabel.setTextFill(Color.rgb(255, 100, 100));
+            errorLabel.setWrapText(true);
+            errorLabel.setVisible(false);
 
             if (GameRules.isBooleanOption(key)) {
                 ComboBox<String> comboBox = new ComboBox<>();
@@ -1289,6 +1334,39 @@ public class ContentPanel extends StackPane {
                     );
 
                     inputControl = comboBox;
+                } else if (GameRules.isPasswordField(key)) {
+                    javafx.scene.control.PasswordField passwordField = new javafx.scene.control.PasswordField();
+                    passwordField.setText(value);
+                    passwordField.setPrefWidth(350);
+                    passwordField.setStyle(
+                        "-fx-background-color: rgba(255,255,255,0.1);" +
+                        "-fx-text-fill: white;" +
+                        "-fx-background-radius: 6;"
+                    );
+                    passwordField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+                        if (!newVal) {
+                            String error = GameRules.validateValue(key, passwordField.getText());
+                            if (!error.isEmpty()) {
+                                errorLabel.setText(error);
+                                errorLabel.setVisible(true);
+                                passwordField.setStyle(
+                                    "-fx-background-color: rgba(255,100,100,0.2);" +
+                                    "-fx-text-fill: white;" +
+                                    "-fx-background-radius: 6;" +
+                                    "-fx-border-color: rgba(255,100,100,0.5);" +
+                                    "-fx-border-radius: 6;"
+                                );
+                            } else {
+                                errorLabel.setVisible(false);
+                                passwordField.setStyle(
+                                    "-fx-background-color: rgba(255,255,255,0.1);" +
+                                    "-fx-text-fill: white;" +
+                                    "-fx-background-radius: 6;"
+                                );
+                            }
+                        }
+                    });
+                    inputControl = passwordField;
                 } else {
                     TextField textField = new TextField(value);
                     textField.setPrefWidth(350);
@@ -1297,12 +1375,35 @@ public class ContentPanel extends StackPane {
                         "-fx-text-fill: white;" +
                         "-fx-background-radius: 6;"
                     );
+                    textField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+                        if (!newVal) {
+                            String error = GameRules.validateValue(key, textField.getText());
+                            if (!error.isEmpty()) {
+                                errorLabel.setText(error);
+                                errorLabel.setVisible(true);
+                                textField.setStyle(
+                                    "-fx-background-color: rgba(255,100,100,0.2);" +
+                                    "-fx-text-fill: white;" +
+                                    "-fx-background-radius: 6;" +
+                                    "-fx-border-color: rgba(255,100,100,0.5);" +
+                                    "-fx-border-radius: 6;"
+                                );
+                            } else {
+                                errorLabel.setVisible(false);
+                                textField.setStyle(
+                                    "-fx-background-color: rgba(255,255,255,0.1);" +
+                                    "-fx-text-fill: white;" +
+                                    "-fx-background-radius: 6;"
+                                );
+                            }
+                        }
+                    });
                     inputControl = textField;
                 }
             }
 
             controlMap.put(key, inputControl);
-            row.getChildren().addAll(titleLabel, descLabel, inputControl);
+            row.getChildren().addAll(titleLabel, descLabel, inputControl, errorLabel);
             configBox.getChildren().add(row);
         }
 
@@ -1318,6 +1419,8 @@ public class ContentPanel extends StackPane {
                 if (control instanceof ComboBox<?>) {
                     String displayValue = ((ComboBox<?>) control).getValue().toString();
                     value = GameRules.getValueFromDisplay(key, displayValue);
+                } else if (control instanceof javafx.scene.control.PasswordField) {
+                    value = ((javafx.scene.control.PasswordField) control).getText();
                 } else {
                     value = ((TextField) control).getText();
                 }

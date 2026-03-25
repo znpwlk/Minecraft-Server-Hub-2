@@ -1,8 +1,6 @@
 import java.io.*;
 import java.net.HttpURLConnection;
-import java.net.InetSocketAddress;
 import java.net.Proxy;
-import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
@@ -769,17 +767,8 @@ public class UpdateDownloader {
     }
 
     private static HttpURLConnection createConnection(URL url) throws IOException {
-        try {
-            List<Proxy> proxies = ProxySelector.getDefault().select(url.toURI());
-            for (Proxy proxy : proxies) {
-                try {
-                    return (HttpURLConnection) url.openConnection(proxy);
-                } catch (IOException e) {
-                }
-            }
-        } catch (Exception e) {
-        }
-        return (HttpURLConnection) url.openConnection();
+        Proxy proxy = ProxyDetector.getProxyForUrl(url);
+        return (HttpURLConnection) url.openConnection(proxy);
     }
 
     private static String getCurrentJarPath() {

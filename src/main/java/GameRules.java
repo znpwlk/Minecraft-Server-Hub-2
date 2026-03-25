@@ -133,6 +133,14 @@ public class GameRules {
             case "level-seed" -> "世界种子";
             case "level-type" -> "世界类型";
             case "log-ips" -> "记录IP";
+            case "management-server-allowed-origins" -> "管理服务器允许来源";
+            case "management-server-enabled" -> "启用管理服务器";
+            case "management-server-host" -> "管理服务器主机";
+            case "management-server-port" -> "管理服务器端口";
+            case "management-server-secret" -> "管理服务器密钥";
+            case "management-server-tls-enabled" -> "管理服务器TLS";
+            case "management-server-tls-keystore" -> "管理服务器密钥库";
+            case "management-server-tls-keystore-password" -> "管理服务器密钥库密码";
             case "max-chained-neighbor-updates" -> "最大连锁更新";
             case "max-players" -> "最大玩家数";
             case "max-tick-time" -> "最大Tick时间";
@@ -199,6 +207,14 @@ public class GameRules {
             case "level-seed" -> "相同的种子生成相同的世界，留空为随机";
             case "level-type" -> "normal=普通 flat=超平坦 large_biomes=巨型 amplified=放大化";
             case "log-ips" -> "开启有助于排查问题但会占用更多空间";
+            case "management-server-allowed-origins" -> "允许访问管理服务器的来源地址，多个用逗号分隔";
+            case "management-server-enabled" -> "启用内置管理服务器功能，用于远程管理";
+            case "management-server-host" -> "管理服务器监听的主机地址，默认localhost";
+            case "management-server-port" -> "管理服务器监听的端口，0表示自动分配";
+            case "management-server-secret" -> "管理服务器的访问密钥，用于身份验证";
+            case "management-server-tls-enabled" -> "启用TLS加密连接管理服务器";
+            case "management-server-tls-keystore" -> "TLS密钥库文件路径";
+            case "management-server-tls-keystore-password" -> "TLS密钥库密码";
             case "max-chained-neighbor-updates" -> "防止红石机器导致崩溃，推荐：1000000";
             case "max-players" -> "根据服务器配置调整，推荐：10-100";
             case "max-tick-time" -> "超时会被认为是崩溃，推荐：60000";
@@ -244,7 +260,8 @@ public class GameRules {
                  "force-gamemode", "generate-structures", "hardcore",
                  "hide-online-players", "log-ips", "online-mode",
                  "prevent-proxy-connections", "require-resource-pack",
-                 "sync-chunk-writes", "use-native-transport", "white-list" -> true;
+                 "sync-chunk-writes", "use-native-transport", "white-list",
+                 "management-server-enabled", "management-server-tls-enabled" -> true;
             default -> false;
         };
     }
@@ -288,6 +305,196 @@ public class GameRules {
 
     public static boolean shouldShowOption(String key, String value) {
         return true;
+    }
+
+    public static boolean isPasswordField(String key) {
+        return switch (key) {
+            case "rcon.password", "management-server-secret",
+                 "management-server-tls-keystore-password" -> true;
+            default -> false;
+        };
+    }
+
+    public static String validateValue(String key, String value) {
+        if (value == null) value = "";
+        value = value.trim();
+
+        return switch (key) {
+            case "server-port", "rcon.port", "query.port", "management-server-port" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int port = Integer.parseInt(value);
+                    if (port < 0 || port > 65535) {
+                        yield "端口号必须在 0-65535 之间";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "端口号必须是数字";
+                }
+            }
+            case "max-players" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int players = Integer.parseInt(value);
+                    if (players < 1 || players > 100000) {
+                        yield "最大玩家数必须在 1-100000 之间";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "最大玩家数必须是数字";
+                }
+            }
+            case "view-distance", "simulation-distance" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int distance = Integer.parseInt(value);
+                    if (distance < 3 || distance > 32) {
+                        yield "视距必须在 3-32 之间";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "视距必须是数字";
+                }
+            }
+            case "spawn-protection" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int protection = Integer.parseInt(value);
+                    if (protection < 0) {
+                        yield "出生点保护不能为负数";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "出生点保护必须是数字";
+                }
+            }
+            case "player-idle-timeout" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int timeout = Integer.parseInt(value);
+                    if (timeout < 0) {
+                        yield "空闲超时不能为负数";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "空闲超时必须是数字";
+                }
+            }
+            case "network-compression-threshold" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int threshold = Integer.parseInt(value);
+                    if (threshold < -1) {
+                        yield "压缩阈值不能小于 -1";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "压缩阈值必须是数字";
+                }
+            }
+            case "max-world-size" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int size = Integer.parseInt(value);
+                    if (size < 1 || size > 29999984) {
+                        yield "世界大小必须在 1-29999984 之间";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "世界大小必须是数字";
+                }
+            }
+            case "op-permission-level", "function-permission-level" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int level = Integer.parseInt(value);
+                    if (level < 1 || level > 4) {
+                        yield "权限等级必须在 1-4 之间";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "权限等级必须是数字";
+                }
+            }
+            case "max-tick-time" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    long time = Long.parseLong(value);
+                    if (time < 0) {
+                        yield "最大Tick时间不能为负数";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "最大Tick时间必须是数字";
+                }
+            }
+            case "entity-broadcast-range-percentage" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int percentage = Integer.parseInt(value);
+                    if (percentage < 10 || percentage > 1000) {
+                        yield "实体广播范围百分比必须在 10-1000 之间";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "实体广播范围必须是数字";
+                }
+            }
+            case "rate-limit" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int limit = Integer.parseInt(value);
+                    if (limit < 0) {
+                        yield "速率限制不能为负数";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "速率限制必须是数字";
+                }
+            }
+            case "pause-when-empty-seconds" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    int seconds = Integer.parseInt(value);
+                    if (seconds < -1) {
+                        yield "空服暂停秒数不能小于 -1";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "空服暂停秒数必须是数字";
+                }
+            }
+            case "max-chained-neighbor-updates" -> {
+                if (value.isEmpty()) yield "";
+                try {
+                    long updates = Long.parseLong(value);
+                    if (updates < 0) {
+                        yield "最大连锁更新不能为负数";
+                    }
+                    yield "";
+                } catch (NumberFormatException e) {
+                    yield "最大连锁更新必须是数字";
+                }
+            }
+            case "server-ip" -> {
+                if (value.isEmpty()) yield "";
+                if (value.equals("localhost") || value.equals("127.0.0.1") || value.equals("0.0.0.0")) {
+                    yield "";
+                }
+                if (value.matches("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$")) {
+                    String[] parts = value.split("\\.");
+                    for (String part : parts) {
+                        int num = Integer.parseInt(part);
+                        if (num < 0 || num > 255) {
+                            yield "IP地址格式不正确";
+                        }
+                    }
+                    yield "";
+                }
+                yield "IP地址格式不正确";
+            }
+            default -> "";
+        };
     }
 
     public static int getPriority(String key) {

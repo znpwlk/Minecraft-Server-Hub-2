@@ -2,12 +2,9 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.InetSocketAddress;
 import java.net.Proxy;
-import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URL;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -153,17 +150,8 @@ public class UpdateChecker {
     }
 
     private HttpURLConnection createConnection(URL url) throws IOException {
-        try {
-            List<Proxy> proxies = ProxySelector.getDefault().select(url.toURI());
-            for (Proxy proxy : proxies) {
-                try {
-                    return (HttpURLConnection) url.openConnection(proxy);
-                } catch (IOException e) {
-                }
-            }
-        } catch (Exception e) {
-        }
-        return (HttpURLConnection) url.openConnection();
+        Proxy proxy = ProxyDetector.getProxyForUrl(url);
+        return (HttpURLConnection) url.openConnection(proxy);
     }
 
     private String extractJsonValue(String json, String key) {
