@@ -31,6 +31,8 @@ public class ContentPanel extends StackPane {
     private TextField commandField;
     private Button sendBtn;
     private ServerCore currentServer;
+    private java.util.List<String> commandHistory = new java.util.ArrayList<>();
+    private int historyIndex = -1;
     private String currentPage = "";
     private boolean isAnimating = false;
     private java.util.concurrent.ExecutorService verifyExecutor = null;
@@ -57,6 +59,16 @@ public class ContentPanel extends StackPane {
         setClip(clip);
 
         loadDialogAnimation();
+
+        addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.L && e.isControlDown()) {
+                if (logArea != null) {
+                    logArea.setText("");
+                    mainApp.showNotification("日志已清除", "success");
+                }
+                e.consume();
+            }
+        });
 
         showHome();
     }
@@ -824,6 +836,7 @@ public class ContentPanel extends StackPane {
         
         VBox consoleView = new VBox(15);
         consoleView.setPadding(new Insets(10));
+        consoleView.setFocusTraversable(true);
         
         HBox titleBox = new HBox(15);
         titleBox.setAlignment(Pos.CENTER_LEFT);
@@ -885,6 +898,14 @@ public class ContentPanel extends StackPane {
             "-fx-font-family: Consolas;" +
             "-fx-font-size: 12;"
         );
+        logArea.setFocusTraversable(true);
+        logArea.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.L && e.isControlDown()) {
+                logArea.setText("");
+                mainApp.showNotification("日志已清除", "success");
+                e.consume();
+            }
+        });
 
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r);
@@ -1023,14 +1044,48 @@ public class ContentPanel extends StackPane {
         commandField = new TextField();
         commandField.setPromptText("输入命令...");
         commandField.setPrefWidth(550);
-        commandField.setPrefHeight(38);
+        commandField.setPrefHeight(48);
         commandField.setStyle(
             "-fx-background-color: rgba(255,255,255,0.1);" +
             "-fx-text-fill: white;" +
             "-fx-prompt-text-fill: gray;" +
-            "-fx-background-radius: 8;"
+            "-fx-background-radius: 8;" +
+            "-fx-font-size: 14;"
         );
-        commandField.setOnAction(e -> sendCommand());
+        commandField.setOnAction(e -> {
+            String cmd = commandField.getText().trim();
+            if (!cmd.isEmpty()) {
+                commandHistory.add(cmd);
+                historyIndex = commandHistory.size();
+            }
+            sendCommand();
+        });
+        commandField.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.UP) {
+                if (!commandHistory.isEmpty() && historyIndex > 0) {
+                    historyIndex--;
+                    commandField.setText(commandHistory.get(historyIndex));
+                    commandField.selectPositionCaret(commandField.getText().length());
+                }
+                e.consume();
+            } else if (e.getCode() == javafx.scene.input.KeyCode.DOWN) {
+                if (!commandHistory.isEmpty() && historyIndex < commandHistory.size() - 1) {
+                    historyIndex++;
+                    commandField.setText(commandHistory.get(historyIndex));
+                    commandField.selectPositionCaret(commandField.getText().length());
+                } else if (historyIndex == commandHistory.size() - 1) {
+                    historyIndex++;
+                    commandField.setText("");
+                }
+                e.consume();
+            } else if (e.getCode() == javafx.scene.input.KeyCode.L && e.isControlDown()) {
+                if (logArea != null) {
+                    logArea.setText("");
+                    mainApp.showNotification("日志已清除", "success");
+                }
+                e.consume();
+            }
+        });
         
         sendBtn = createSmallIconBtn("发送", "#2196F3", "M2.01 21L23 12 2.01 3 2 10l15 2-15 2z");
         sendBtn.setOnAction(e -> sendCommand());
@@ -1043,6 +1098,12 @@ public class ContentPanel extends StackPane {
         switchView(consoleView, transitionType);
         currentPage = "console";
         updateStatus();
+        
+        Platform.runLater(() -> {
+            if (logArea != null) {
+                logArea.requestFocus();
+            }
+        });
 
         if (sidebar != null) {
             sidebar.showSubPageNav(
